@@ -1,19 +1,73 @@
-// Virtual CPU implementation
-
 use std::{collections::HashMap, fmt::Debug};
 
-#[derive(Debug)]
-struct Flags {
-    carry: bool,
-    zero: bool,
-    interrupt: bool,
-    sign: bool,
-    overflow: bool,
-    parity: bool,
+
+
+trait GetValue<T> {
+    fn get_value(&self) -> T;
 }
 
-#[derive(Copy, Clone)]
+trait SetValue<T> {
+    fn set_value(&mut self, value: T);
+}
+
+trait DisplayRegister: std::fmt::Debug {
+    fn display(&self){
+        println!("{:?}", self);   
+    }
+}
+
+#[derive(Debug)]
+/// Registers type used to store different register types of the CPU
+struct Registers{
+    GP: [GPRegister; 8],
+    SP: [SPRegister; 3],
+    FLAGS: [FLAGS; 9],
+}
+
+impl DisplayRegister for Registers {
+    fn display(&self) {
+        println!("General Purpose Registers:");
+        self.GP.iter().for_each(|reg| {
+            println!("{:?}", reg);
+        });
+
+        println!("Special Purpose Registers:");
+        self.SP.iter().for_each(|reg| {
+            println!("{:?}", reg);
+        });
+
+        println!("Flags:");
+        self.FLAGS.iter().for_each(|flag| {
+            println!("{:?}", flag);
+        });
+    }
+}
+
+impl Registers {
+    fn get_register(&mut self, register: Register) -> &mut GPRegister {
+        match register {
+            Register::AX => &mut self.GP[0],
+            Register::BX => &mut self.GP[1],
+            Register::CX => &mut self.GP[2],
+            Register::DX => &mut self.GP[3],
+            Register::EAX => &mut self.GP[4],
+            Register::EBX => &mut self.GP[5],
+            Register::ECX => &mut self.GP[6],
+            Register::EDX => &mut self.GP[7],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+/// General Purpose Registers for user interfacing(usage) when writing Instructions
 enum Register{
+    AX, BX, CX, DX,
+    EAX, EBX, ECX, EDX,
+}
+
+#[derive(Clone, Debug)]
+///General Purpose Registers
+enum GPRegister {
     AX(u8, u8),
     BX(u8, u8),
     CX(u8, u8),
@@ -21,1585 +75,587 @@ enum Register{
     EAX(u8, u8, u8, u8),
     EBX(u8, u8, u8, u8),
     ECX(u8, u8, u8, u8),
-    EDX(u8, u8, u8, u8)
+    EDX(u8, u8, u8, u8),
 }
 
 
 
-impl Register {
-    fn flush(&mut self){
+impl GetValue<u32> for GPRegister {
+    fn get_value(&self) -> u32 {
         match self {
-            Register::AX(_, _) => {
-                *self = Register::AX(0, 0);
+            GPRegister::AX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            GPRegister::BX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            GPRegister::CX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            GPRegister::DX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            GPRegister::EAX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
+            GPRegister::EBX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
+            GPRegister::ECX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
+            GPRegister::EDX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
+        }
+    }
+}
+
+//TODO: Implementing the SetValue trait for the GPRegister enum
+//TODO: Ensure it stores values as bytes in Little Endian format for the corresponding register
+//TODO: Empty the source register after moving the value to the destination register.
+impl SetValue<Data> for GPRegister {
+    fn set_value(&mut self, value: Data) {
+        match self {
+            GPRegister::AX(_, ah) => {
+                match value {
+                    Data::Byte(value) => *self = GPRegister::AX(value, *ah),
+                    Data::Word(value) => {
+                        let data = value.to_le_bytes();
+                        *self = GPRegister::AX(data[0], data[1]);
+                    }
+                    _ => {
+                        panic!("Data type mismatch. Expected Word or Byte, found Dword");
+                    }
+                }
             },
-            Register::BX(_, _) => {
-                *self = Register::BX(0, 0);
+
+            GPRegister::BX(_, bh) => {
+                match value {
+                    Data::Byte(value) => *self = GPRegister::BX(value, *bh),
+                    Data::Word(value) => {
+                        let data = value.to_le_bytes();
+                        *self = GPRegister::BX(data[0], data[1]);
+                    }
+                    _ => {
+                        panic!("Data type mismatch. Expected Word or Byte, found Dword");
+                    }
+                }
             },
-            Register::CX(_, _) => {
-                *self = Register::CX(0, 0);
+
+            GPRegister::CX(_, ch) => {
+                match value {
+                    Data::Byte(value) => *self = GPRegister::CX(value, *ch),
+                    Data::Word(value) => {
+                        let data = value.to_le_bytes();
+                        *self = GPRegister::CX(data[0], data[1]);
+                    }
+                    _ => {
+                        panic!("Data type mismatch. Expected Word or Byte, found Dword");
+                    }
+                }
             },
-            Register::DX(_, _) => {
-                *self = Register::DX(0, 0);
+
+            GPRegister::DX(_, dh) => {
+                match value {
+                    Data::Byte(value) => *self = GPRegister::DX(value, *dh),
+                    Data::Word(value) => {
+                        let data = value.to_le_bytes();
+                        *self = GPRegister::DX(data[0], data[1]);
+                    }
+                    _ => {
+                        panic!("Data type mismatch. Expected Word or Byte, found Dword");
+                    }
+                }
             },
-            Register::EAX(_, _, _, _) => {
-                *self = Register::EAX(0, 0, 0, 0);
+
+            GPRegister::EAX(_, ah, eal, eah) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = GPRegister::EAX(a, *ah, *eal, *eah);
+                    }
+                    Data::Word(a) => {
+                        let ah = (a >> 8) as u8;
+                        let al = (a & 0x00FF) as u8;
+                        *self = GPRegister::EAX(al, ah, *eal, *eah);
+                    }
+                    Data::Dword(a) => {
+                        let eah = (a >> 16) as u8;
+                        let eal = (a >> 8) as u8;
+                        let ah = (a >> 24) as u8;
+                        let al = (a & 0x00FF) as u8;
+                        *self = GPRegister::EAX(al, ah, eal, eah);
+                    }
+                }
             },
-            Register::EBX(_, _, _, _) => {
-                *self = Register::EBX(0, 0, 0, 0);
+
+            GPRegister::EBX(_, bh, ebl, ebh) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = GPRegister::EBX(a, *bh, *ebl, *ebh);
+                    }
+                    Data::Word(a) => {
+                        let bh = (a >> 8) as u8;
+                        let bl = (a & 0x00FF) as u8;
+                        *self = GPRegister::EBX(bl, bh, *ebl, *ebh);
+                    }
+                    Data::Dword(a) => {
+                        let ebh = (a >> 16) as u8;
+                        let ebl = (a >> 8) as u8;
+                        let bh = (a >> 24) as u8;
+                        let bl = (a & 0x00FF) as u8;
+                        *self = GPRegister::EBX(bl, bh, ebl, ebh);
+                    }
+                }
             },
-            Register::ECX(_, _, _, _) => {
-                *self = Register::ECX(0, 0, 0, 0);
+
+            GPRegister::ECX(_, ch, ecl, ech) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = GPRegister::ECX(a, *ch, *ecl, *ech);
+                    }
+                    Data::Word(a) => {
+                        let ch = (a >> 8) as u8;
+                        let cl = (a & 0x00FF) as u8;
+                        *self = GPRegister::ECX(cl, ch, *ecl, *ech);
+                    }
+                    Data::Dword(a) => {
+                        let ech = (a >> 16) as u8;
+                        let ecl = (a >> 8) as u8;
+                        let ch = (a >> 24) as u8;
+                        let cl = (a & 0x00FF) as u8;
+                        *self = GPRegister::ECX(cl, ch, ecl, ech);
+                    }
+                }
             },
-            Register::EDX(_, _, _, _) => {
-                *self = Register::EDX(0, 0, 0, 0);
+
+            GPRegister::EDX(_, dh, edl, edh) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = GPRegister::EDX(a, *dh, *edl, *edh);
+                    }
+                    Data::Word(a) => {
+                        let dh = (a >> 8) as u8;
+                        let dl = (a & 0x00FF) as u8;
+                        *self = GPRegister::EDX(dl, dh, *edl, *edh);
+                    }
+                    Data::Dword(a) => {
+                        let edh = (a >> 16) as u8;
+                        let edl = (a >> 8) as u8;
+                        let dh = (a >> 24) as u8;
+                        let dl = (a & 0x00FF) as u8;
+                        *self = GPRegister::EDX(dl, dh, edl, edh);
+                    }
+                }
             },
         }
     }
 }
 
-impl Debug for Register {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+#[derive(Debug, Clone)]
+///Special Purpose Registers
+enum SPRegister {
+    SP(u8, u8),
+    BP(u8, u8),
+    IP(u8, u8),
+}
+
+impl GetValue<u32>for SPRegister {
+    fn get_value(&self) -> u32 {
         match self {
-            Register::AX(a, b) => write!(f, "AX: {:?}{:?}", a, b),
-            Register::BX(a, b) => write!(f, "BX: {:?}{:?}", a, b),
-            Register::CX(a, b) => write!(f, "CX: {:?}{:?}", a, b),
-            Register::DX(a, b) => write!(f, "DX: {:?}{:?}", a, b),
-            Register::EAX(a, b, c, d) => write!(f, "EAX: {:?}{:?}{:?}{:?}", a, b, c, d),
-            Register::EBX(a, b, c, d) => write!(f, "EBX: {:?}{:?}{:?}{:?}", a, b, c, d),
-            Register::ECX(a, b, c, d) => write!(f, "ECX: {:?}{:?}{:?}{:?}", a, b, c, d),
-            Register::EDX(a, b, c, d) => write!(f, "EDX: {:?}{:?}{:?}{:?}", a, b, c, d),
+            SPRegister::SP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            SPRegister::BP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            SPRegister::IP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
         }
     }
 }
 
-impl PartialEq for Register {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Register::AX(_, _), Register::AX(_, _)) => true,
-            (Register::BX(_, _), Register::BX(_, _)) => true,
-            (Register::CX(_, _), Register::CX(_, _)) => true,
-            (Register::DX(_, _), Register::DX(_, _)) => true,
-            (Register::EAX(_, _, _, _), Register::EAX(_, _, _, _)) => true,
-            (Register::EBX(_, _, _, _), Register::EBX(_, _, _, _)) => true,
-            (Register::ECX(_, _, _, _), Register::ECX(_, _, _, _)) => true,
-            (Register::EDX(_, _, _, _), Register::EDX(_, _, _, _)) => true,
-            _ => false
+impl SetValue<Data> for SPRegister {
+    fn set_value(&mut self, value: Data) {
+        match self {
+            SPRegister::SP(_, b) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = SPRegister::SP(a, *b);
+                    }
+                    Data::Word(a) => {
+                        let b = (a >> 8) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::SP(a, b);
+                    }
+                    Data::Dword(a) => {
+                        let b = (a >> 16) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::SP(a, b);
+                    }
+                }
+            },
+
+            SPRegister::BP(_, b) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = SPRegister::BP(a, *b);
+                    }
+                    Data::Word(a) => {
+                        let b = (a >> 8) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::BP(a, b);
+                    }
+                    Data::Dword(a) => {
+                        let b = (a >> 16) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::BP(a, b);
+                    }
+                }
+            },
+
+            SPRegister::IP(_, b) => {
+                match value {
+                    Data::Byte(a) => {
+                        *self = SPRegister::IP(a, *b);
+                    }
+                    Data::Word(a) => {
+                        let b = (a >> 8) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::IP(a, b);
+                    }
+                    Data::Dword(a) => {
+                        let b = (a >> 16) as u8;
+                        let a = (a & 0x00FF) as u8;
+                        *self = SPRegister::IP(a, b);
+                    }
+                }
+            },
         }
-    }    
+    }
 }
 
 #[derive(Debug, Clone)]
-struct Instruction{
-    opcode: IS,
-    operands: Vec<Operand>,
+enum FLAGS {
+    PF(u8), AF(u8), ZF(u8),
+    SF(u8), TF(u8), IF(u8),
+    DF(u8), OF(u8), CF(u8),
+}
+
+impl GetValue<u8> for FLAGS {
+    fn get_value(&self) -> u8 {
+        match self {
+            FLAGS::AF(a) => *a, FLAGS::ZF(a) => *a,
+            FLAGS::SF(a) => *a, FLAGS::TF(a) => *a,
+            FLAGS::IF(a) => *a, FLAGS::DF(a) => *a,
+            FLAGS::OF(a) => *a, FLAGS::CF(a) => *a,
+            FLAGS::PF(a) => *a,
+        }
+    }
+}
+
+impl SetValue<u8> for FLAGS {
+    fn set_value(&mut self, value: u8) {
+        match self {
+            FLAGS::ZF(a) => *a = value, FLAGS::SF(a) => *a = value,
+            FLAGS::TF(a) => *a = value, FLAGS::IF(a) => *a = value,
+            FLAGS::DF(a) => *a = value, FLAGS::OF(a) => *a = value,
+            FLAGS::CF(a) => *a = value, FLAGS::PF(a) => *a = value,
+            FLAGS::AF(a) => *a = value,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
+///! Instruction Set. This is the set of instructions that the CPU can execute.
+/// NB: Not all instructions are implemented.
 enum IS {
-    Mov, Add, Sub, Mul,
-    Div, And, Or, Xor,
-    Not, Cmp, Jmp, Je,
-    Jne, Jg, Jge, Jl,
-    Jle, Call, Ret, Push, 
-    Pop
+    Mov, Add, Sub,
+    Mul, Div, And,
+    Or, Xor, Not
 }
 
 #[derive(Debug, Clone)]
-enum Operand{
+/// Data type used to store data in memory
+/// NB: Only Byte, Word and Dword are supported
+enum Data {
+    Byte(u8),
+    Word(u16),
+    Dword(u32),
+}
+
+impl GetValue<u32> for Data {
+    fn get_value(&self) -> u32 {
+        match self {
+            Data::Byte(a) => *a as u32,
+            Data::Word(a) => *a as u32,
+            Data::Dword(a) => *a,
+        }
+    }
+    
+}
+
+#[derive(Debug, Clone)]
+/// Operand type used to store operands for instructions
+/// Usage example:
+/// ```
+/// Instruction::new(
+///     IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(0x00FF))]
+/// );
+/// ```
+/// This example moves the value 0x00FF to the AX register
+/// It simulates the instruction `MOV AX, 0x00FF` in x86 assembly
+/// ```
+enum Operand {
     Register(Register),
     Memory(String),
     Immediate(Data),
 }
 
 #[derive(Debug, Clone)]
-enum Data{
-    Byte(u8),
-    Word(u16),
-    Dword(u32),
+struct Instruction {
+    opcode: IS,
+    operands: Vec<Operand>,
+    operand_count: u8,
 }
 
-impl Data {
-    fn get_value(&self) -> usize{
-        match self {
-            Data::Byte(value) => *value as usize,
-            Data::Word(value) => *value as usize,
-            Data::Dword(value) => *value as usize,
+impl Instruction {
+    fn new(opcode: IS, operands: Vec<Operand>) -> Instruction {
+        Instruction {
+            operand_count: operands.len() as u8,
+            opcode,
+            operands,
+        }
+    }
+
+    fn verify_operands(&self) -> bool {
+        match self.opcode {
+            IS::Mov => {
+                match self.operand_count {
+                    2 => true,
+                    _ => false
+                }
+            },
+            IS::Add => {
+                match self.operand_count {
+                    2 => true,
+                    _ => false,
+                }
+            },
+            IS::Sub => {
+                match self.operand_count {
+                    2 => true,
+                    _ => false,
+                }
+            },
+            _ => panic!("Unsupported Instruction"),
+            
         }
     }
 }
 
 #[derive(Debug)]
-struct Program{
+/// Memory Unit
+/// This is the unit that stores data and code sections
+/// It is used to simulate the memory of the CPU
+struct MemoryUnit {
     data_section: HashMap<String, Data>,
-    bss_section: HashMap<String, Data>,
-    text_section: Vec<Instruction>,
+    code_section: Vec<Instruction>,
 }
 
-struct CPU{
-    registers: HashMap<String, Register>,
-    memory: Program,
-    stack: Vec<u8>,
-    program_counter: usize,
-    flags: Flags
+#[derive(Debug)]
+enum ALUMode {
+    Add, Sub, Mul,
+    Div, And, Or,
+    Xor, Not, Off
 }
 
-impl Debug  for CPU {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Internal CPU state: 
+#[derive(Debug)]
+/// Arithmetic Logic Unit
+/// This is the unit that performs arithmetic and logical operations
+/// All operations assume u8 values
+struct ALU{
+    buffers: Vec<u8>,
+    mode: ALUMode,
+}
 
-registers: {:#?},
-
-memory: {:?}, 
-stack: {:?}, 
-flags: {:?}", self.registers, self.memory, self.stack, self.flags)
+impl ALU {
+    fn new() -> ALU {
+        ALU {
+            buffers: Vec::new(),
+            mode: ALUMode::Off,
+        }
     }
-    
+
+    /// Sets the mode of the ALU's operation state
+    fn set_mode(&mut self, mode: ALUMode) {
+        self.mode = mode;
+    }
+
+    /// Executes the operation based on the mode of the ALU
+    fn execute(&mut self, a: u8, b: u8) -> (u8, bool) {
+        match self.mode {
+            ALUMode::Add => self.add(a, b),
+            ALUMode::Sub => self.sub(a, b),
+            ALUMode::Off => panic!("ALU is off"),
+            _ => panic!("Unsupported mode not implemented"),
+        }
+    }
+
+    /// Adds two u8 values and returns the result and a boolean indicating if there was an overflow
+    fn add(&mut self, a: u8, b: u8) -> (u8, bool) {
+        a.overflowing_add(b)
+    } 
+
+    /// Subtracts two u8 values and returns the result and a boolean indicating if there was an overflow
+    fn sub(&mut self, a: u8, b: u8) -> (u8, bool) {
+        a.overflowing_sub(b)
+    }
+}
+
+#[derive(Debug)]
+/// Central Processing Unit
+/// This is the main unit that controls the execution of the program
+/// It contains the ALU, Registers and Memory Unit
+struct CPU {
+    alu: ALU,
+    registers: Registers,
+    memory_unit: MemoryUnit,
 }
 
 impl CPU {
-    fn new(program: Program)-> Self{
-        Self {
-            registers: HashMap::from([
-                ("AX".to_owned(), Register::AX(0, 0)),
-                ("BX".to_owned(), Register::BX(0, 0)),
-                ("CX".to_owned(), Register::CX(0, 0)),
-                ("DX".to_owned(), Register::DX(0, 0)),
-                ("EAX".to_owned(), Register::EAX(0, 0, 0, 0)),
-                ("EBX".to_owned(), Register::EBX(0, 0, 0, 0)),
-                ("ECX".to_owned(), Register::ECX(0, 0, 0, 0)),
-                ("EDX".to_owned(), Register::EDX(0, 0, 0, 0)),
-            ]),
-            memory: program,
-            stack: Vec::new(),
-            program_counter: 0,
-            flags: Flags{carry: false, zero: false, interrupt: false, sign: false, overflow: false, parity: false}
+    fn new(data_section: HashMap<String, Data>, code_section: Vec<Instruction>)-> CPU {
+        CPU {
+            alu: ALU::new(),
+            registers: Registers {
+                GP: [GPRegister::AX(0, 0), GPRegister::BX(0, 0), GPRegister::CX(0, 0), GPRegister::DX(0, 0), GPRegister::EAX(0, 0, 0, 0), GPRegister::EBX(0, 0, 0, 0), GPRegister::ECX(0, 0, 0, 0), GPRegister::EDX(0, 0, 0, 0)],
+                SP: [SPRegister::SP(0, 0), SPRegister::BP(0, 0), SPRegister::IP(0, 0)],
+                FLAGS: [FLAGS::PF(0), FLAGS::AF(0), FLAGS::ZF(0), FLAGS::SF(0), FLAGS::TF(0), FLAGS::IF(0), FLAGS::DF(0), FLAGS::OF(0), FLAGS::CF(0)],
+            },
+            memory_unit: MemoryUnit {
+                data_section,
+                code_section,
+            },
         }
-    }
-
-    fn display_state(self){
-        println!("{:?}", self)
-    }
-
-    fn display_registers(&self){
-        println!("Registers' state:\n");
-        self.registers.iter().for_each(|(_, value)|{
-            println!("{:>10?}",value);
-        });
-    }
-
-    fn load_program(&mut self, program: Program){
-        self.memory = program;
-    }
-
-    fn fetch(&mut self) -> Option<Instruction>{
-        println!("Program has {} instructions", self.memory.text_section.len());
-        if self.program_counter >= self.memory.text_section.len(){
-            return None;
-        }
-        self.program_counter += 1;
-        Some(self.memory.text_section[self.program_counter].clone())
     }
 
     fn run(&mut self){
+        if self.memory_unit.code_section.len() == 0 {
+            println!("Program is empty");
+            return;
+        }
         loop {
-            self.execute();
-
-            if self.program_counter >= self.memory.text_section.len(){
+            self.fetch();
+            if self.registers.SP[2].get_value() >= self.memory_unit.code_section.len() as u32 {
                 break;
             }
         }
     }
 
-    fn stop(&mut self){
-        self.program_counter = self.memory.text_section.len();
-    }
-
-    fn mov(&mut self, source: &Operand, destination: &Operand){
-        match (destination, source) {
-            (Operand::Register(dest_reg), Operand::Register(src_reg)) => {
-                match (dest_reg, src_reg) {
-                    (Register::AX(_, _), Register::BX(_, _)) => {
-                        let bx = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap();
-                        self.registers.insert("AX".to_owned(), bx);
-                    },
-                    (Register::AX(_, _), Register::CX(_, _)) => {
-                        let cx = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap();
-                        self.registers.insert("AX".to_owned(), cx);
-                    },
-                    (Register::AX(_, _), Register::DX(_, _)) => {
-                        let dx = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap();
-                        self.registers.insert("AX".to_owned(), dx);
-                    },
-                    (Register::AX(_, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.get("EAX").unwrap() {
-                            let eax = Register::EAX(0, 0, *c, *d);
-                            let ax = Register::AX(*a, *b);
-                            self.registers.insert("EAX".to_owned(), eax);
-                            self.registers.insert("AX".to_owned(), ax);
-                        }
-                    },
-                    (Register::AX(_, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.get("EBX").unwrap() {
-                            let ebx = Register::EBX(0, 0, *c, *d);
-                            let ax = Register::AX(*a, *b);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                            self.registers.insert("AX".to_owned(), ax);
-                        }
-                    },
-                    (Register::AX(_, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.get("ECX").unwrap() {
-                            let ecx = Register::ECX(0, 0, *c, *d);
-                            let ax = Register::AX(*a, *b);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                            self.registers.insert("AX".to_owned(), ax);
-                        }
-                    },
-                    (Register::AX(_, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.get("EDX").unwrap() {
-                            let edx = Register::EDX(0, 0, *c, *d);
-                            let ax = Register::AX(*a, *b);
-                            self.registers.insert("EDX".to_owned(), edx);
-                            self.registers.insert("AX".to_owned(), ax);
-                        }
-                    },
-                    (Register::BX(_, _), Register::AX(_, _)) => {
-                        let ax = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap();
-                        self.registers.insert("BX".to_owned(), ax);
-                    },
-                    (Register::BX(_, _), Register::CX(_, _)) => {
-                        let cx = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap();
-                        self.registers.insert("BX".to_owned(), cx);
-                    },
-                    (Register::BX(_, _), Register::DX(_, _)) => {
-                        let dx = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap();
-                        self.registers.insert("BX".to_owned(), dx);
-                    },
-                    (Register::BX(_, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.get("EAX").unwrap() {
-                            let eax = Register::EAX(0, 0, *c, *d);
-                            let bx = Register::BX(*a, *b);
-                            self.registers.insert("EAX".to_owned(), eax);
-                            self.registers.insert("BX".to_owned(), bx);
-                        }
-                    },
-                    (Register::BX(_, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.get("EBX").unwrap() {
-                            let ebx = Register::EBX(0, 0, *c, *d);
-                            let bx = Register::BX(*a, *b);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                            self.registers.insert("BX".to_owned(), bx);
-                        }
-                    },
-                    (Register::BX(_, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.get("ECX").unwrap() {
-                            let ecx = Register::ECX(0, 0, *c, *d);
-                            let bx = Register::BX(*a, *b);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                            self.registers.insert("BX".to_owned(), bx);
-                        }
-                    },
-                    (Register::BX(_, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.get("EDX").unwrap() {
-                            let edx = Register::EDX(0, 0, *c, *d);
-                            let bx = Register::BX(*a, *b);
-                            self.registers.insert("EDX".to_owned(), edx);
-                            self.registers.insert("BX".to_owned(), bx);
-                        }
-                    },
-                    (Register::CX(_, _), Register::AX(_, _)) => {
-                        let ax = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap();
-                        self.registers.insert("CX".to_owned(), ax);
-                    },
-                    (Register::CX(_, _), Register::BX(_, _)) => {
-                        let bx = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap();
-                        self.registers.insert("CX".to_owned(), bx);
-                    },
-                    (Register::CX(_, _), Register::DX(_, _)) => {
-                        let dx = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap();
-                        self.registers.insert("CX".to_owned(), dx);
-                    },
-                    (Register::CX(_, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.get("EAX").unwrap() {
-                            let eax = Register::EAX(0, 0, *c, *d);
-                            let cx = Register::CX(*a, *b);
-                            self.registers.insert("EAX".to_owned(), eax);
-                            self.registers.insert("CX".to_owned(), cx);
-                        }
-                    },
-                    (Register::CX(_, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.get("EBX").unwrap() {
-                            let ebx = Register::EBX(0, 0, *c, *d);
-                            let cx = Register::CX(*a, *b);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                            self.registers.insert("CX".to_owned(), cx);
-                        }
-                    },
-                    (Register::CX(_, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.get("ECX").unwrap() {
-                            let ecx = Register::ECX(0, 0, *c, *d);
-                            let cx = Register::CX(*a, *b);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                            self.registers.insert("CX".to_owned(), cx);
-                        }
-                    },
-                    (Register::CX(_, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.get("EDX").unwrap() {
-                            let edx = Register::EDX(0, 0, *c, *d);
-                            let cx = Register::CX(*a, *b);
-                            self.registers.insert("EDX".to_owned(), edx);
-                            self.registers.insert("CX".to_owned(), cx);
-                        }
-                    },
-                    (Register::DX(_, _), Register::AX(_, _)) => {
-                        let ax = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap();
-                        self.registers.insert("DX".to_owned(), ax);
-                    },
-                    (Register::DX(_, _), Register::BX(_, _)) => {
-                        let bx = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap();
-                        self.registers.insert("DX".to_owned(), bx);
-                    },
-                    (Register::DX(_, _), Register::CX(_, _)) => {
-                        let cx = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap();
-                        self.registers.insert("DX".to_owned(), cx);
-                    },
-                    (Register::DX(_, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.get("EAX").unwrap() {
-                            let eax = Register::EAX(0, 0, *c, *d);
-                            let dx = Register::DX(*a, *b);
-                            self.registers.insert("EAX".to_owned(), eax);
-                            self.registers.insert("DX".to_owned(), dx);
-                        }
-                    },
-                    (Register::DX(_, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.get("EBX").unwrap() {
-                            let ebx = Register::EBX(0, 0, *c, *d);
-                            let dx = Register::DX(*a, *b);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                            self.registers.insert("DX".to_owned(), dx);
-                        }
-                    },
-                    (Register::DX(_, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.get("ECX").unwrap() {
-                            let ecx = Register::ECX(0, 0, *c, *d);
-                            let dx = Register::DX(*a, *b);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                            self.registers.insert("DX".to_owned(), dx);
-                        }
-                    },
-                    (Register::DX(_, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.get("EDX").unwrap() {
-                            let edx = Register::EDX(0, 0, *c, *d);
-                            let dx = Register::DX(*a, *b);
-                            self.registers.insert("EDX".to_owned(), edx);
-                            self.registers.insert("DX".to_owned(), dx);
-                        }
-                    },
-                    (Register::EAX(_, _, _, _), Register::AX(_, _)) => {
-                        if let Register::AX(a, b) = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap(){
-                            if let Register::EAX(_, _, axl, axh) = self.registers.get("EAX").unwrap(){
-                                let eax = Register::EAX(a, b, *axl, *axh);
-                                self.registers.insert("EAX".to_owned(), eax);
-                            }
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::BX(_, _)) => {
-                        if let Register::BX(a, b) = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap(){
-                            if let Register::ECX(_, _, axl, axh) = self.registers.get("ECX").unwrap(){
-                                let ecx = Register::ECX(a, b, *axl, *axh);
-                                self.registers.insert("ECX".to_owned(), ecx);
-                            }
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::CX(_, _)) => {
-                        if let Register::CX(a, b) = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap(){
-                            if let Register::EAX(_, _, axl, axh) = self.registers.get("EAX").unwrap(){
-                                let eax = Register::EAX(a, b, *axl, *axh);
-                                self.registers.insert("EAX".to_owned(), eax);
-                            }
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::DX(_, _)) => {
-                        if let Register::DX(a, b) = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap(){
-                            if let Register::EAX(_, _, axl, axh) = self.registers.get("EAX").unwrap(){
-                                let eax = Register::EAX(a, b, *axl, *axh);
-                                self.registers.insert("EAX".to_owned(), eax);
-                            }
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.insert("EBX".to_owned(), Register::EBX(0, 0, 0, 0)).unwrap(){
-                            let eax = Register::EAX(a, b, c, d);
-                            self.registers.insert("EAX".to_owned(), eax);
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.insert("ECX".to_owned(), Register::ECX(0, 0, 0, 0)).unwrap(){
-                            let eax = Register::EAX(a, b, c, d);
-                            self.registers.insert("EAX".to_owned(), eax);
-                        };
-                    },
-                    (Register::EAX(_, _, _, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.insert("EDX".to_owned(), Register::EDX(0, 0, 0, 0)).unwrap(){
-                            let eax = Register::EAX(a, b, c, d);
-                            self.registers.insert("EAX".to_owned(), eax);
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::AX(_, _)) => {
-                        if let Register::AX(a, b) = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap(){
-                            if let Register::EBX(_, _, bxl, bxh) = self.registers.get("EBX").unwrap(){
-                                let ebx = Register::EBX(a, b, *bxl, *bxh);
-                                self.registers.insert("EBX".to_owned(), ebx);
-                            }
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::BX(_, _)) => {
-                        if let Register::BX(a, b) = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, dxl, dxh) = self.registers.get("EDX").unwrap(){
-                                let edx = Register::EDX(a, b, *dxl, *dxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::CX(_, _)) => {
-                        if let Register::CX(a, b) = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap(){
-                            if let Register::EBX(_, _, bxl, bxh) = self.registers.get("EBX").unwrap(){
-                                let ebx = Register::EBX(a, b, *bxl, *bxh);
-                                self.registers.insert("EBX".to_owned(), ebx);
-                            }
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::DX(_, _)) => {
-                        if let Register::DX(a, b) = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap(){
-                            if let Register::EBX(_, _, bxl, bxh) = self.registers.get("EBX").unwrap(){
-                                let ebx = Register::EBX(a, b, *bxl, *bxh);
-                                self.registers.insert("EBX".to_owned(), ebx);
-                            }
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.insert("EAX".to_owned(), Register::EAX(0, 0, 0, 0)).unwrap(){
-                            let ebx = Register::EBX(a, b, c, d);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.insert("ECX".to_owned(), Register::ECX(0, 0, 0, 0)).unwrap(){
-                            let ebx = Register::EBX(a, b, c, d);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                        };
-                    },
-                    (Register::EBX(_, _, _, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.insert("EDX".to_owned(), Register::EDX(0, 0, 0, 0)).unwrap(){
-                            let ebx = Register::EBX(a, b, c, d);
-                            self.registers.insert("EBX".to_owned(), ebx);
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::AX(_, _)) => {
-                        if let Register::AX(a, b) = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap(){
-                            if let Register::ECX(_, _, cxl, cxh) = self.registers.get("ECX").unwrap(){
-                                let edx = Register::ECX(a, b, *cxl, *cxh);
-                                self.registers.insert("ECX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::BX(_, _)) => {
-                        if let Register::BX(a, b) = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap(){
-                            if let Register::ECX(_, _, cxl, cxh) = self.registers.get("ECX").unwrap(){
-                                let edx = Register::ECX(a, b, *cxl, *cxh);
-                                self.registers.insert("ECX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::CX(_, _)) => {
-                        if let Register::CX(a, b) = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, cxl, cxh) = self.registers.get("ECX").unwrap(){
-                                let edx = Register::ECX(a, b, *cxl, *cxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::DX(_, _)) => {
-                        if let Register::DX(a, b) = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap(){
-                            if let Register::ECX(_, _, cxl, cxh) = self.registers.get("ECX").unwrap(){
-                                let edx = Register::ECX(a, b, *cxl, *cxh);
-                                self.registers.insert("ECX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.insert("EAX".to_owned(), Register::EAX(0, 0, 0, 0)).unwrap(){
-                            let ecx = Register::ECX(a, b, c, d);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.insert("EBX".to_owned(), Register::EBX(0, 0, 0, 0)).unwrap(){
-                            let ecx = Register::ECX(a, b, c, d);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                        };
-                    },
-                    (Register::ECX(_, _, _, _), Register::EDX(_, _, _, _)) => {
-                        if let Register::EDX(a, b, c, d) = self.registers.insert("EDX".to_owned(), Register::EDX(0, 0, 0, 0)).unwrap(){
-                            let ecx = Register::ECX(a, b, c, d);
-                            self.registers.insert("ECX".to_owned(), ecx);
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::AX(_, _)) => {
-                        if let Register::AX(a, b) = self.registers.insert("AX".to_owned(), Register::AX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, dxl, dxh) = self.registers.get("EDX").unwrap(){
-                                let edx = Register::EDX(a, b, *dxl, *dxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::BX(_, _)) => {
-                        if let Register::BX(a, b) = self.registers.insert("BX".to_owned(), Register::BX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, dxl, dxh) = self.registers.get("EDX").unwrap(){
-                                let edx = Register::EDX(a, b, *dxl, *dxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::CX(_, _)) => {
-                        if let Register::CX(a, b) = self.registers.insert("CX".to_owned(), Register::CX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, dxl, dxh) = self.registers.get("EDX").unwrap(){
-                                let edx = Register::EDX(a, b, *dxl, *dxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::DX(_, _)) => {
-                        if let Register::DX(a, b) = self.registers.insert("DX".to_owned(), Register::DX(0, 0)).unwrap(){
-                            if let Register::EDX(_, _, dxl, dxh) = self.registers.get("EDX").unwrap(){
-                                let edx = Register::EDX(a, b, *dxl, *dxh);
-                                self.registers.insert("EDX".to_owned(), edx);
-                            }
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::EAX(_, _, _, _)) => {
-                        if let Register::EAX(a, b, c, d) = self.registers.insert("EAX".to_owned(), Register::EAX(0, 0, 0, 0)).unwrap(){
-                            let edx = Register::EDX(a, b, c, d);
-                            self.registers.insert("EDX".to_owned(), edx);
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::EBX(_, _, _, _)) => {
-                        if let Register::EBX(a, b, c, d) = self.registers.insert("EBX".to_owned(), Register::EBX(0, 0, 0, 0)).unwrap(){
-                            let edx = Register::EDX(a, b, c, d);
-                            self.registers.insert("EDX".to_owned(), edx);
-                        };
-                    },
-                    (Register::EDX(_, _, _, _), Register::ECX(_, _, _, _)) => {
-                        if let Register::ECX(a, b, c, d) = self.registers.insert("ECX".to_owned(), Register::ECX(0, 0, 0, 0)).unwrap(){
-                            let edx = Register::EDX(a, b, c, d);
-                            self.registers.insert("EDX".to_owned(), edx);
-                        };
-                    },
-                    _ => {
-                        println!("Skipping redundant move operation Mov {:?},{:?}. Rsn: Source and destination are equal", destination, source);
-                        return;
-                    }
-                }
-            },
-            (Operand::Register(register), Operand::Memory(address)) => {
-                let address = match self.memory.data_section.contains_key(address) {
-                    true => {
-                        address
-                    },
-                    false => {
-                        match self.memory.bss_section.contains_key(address) {
-                            true => {
-                                address
-                            },
-                            false => {
-                                println!("Use of undeclared value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                        }
-                    }   
-                };
-                match (register, address) {
-                    (Register::AX(_, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-                        
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::AX(_, ah) = self.registers.get_mut("AX").unwrap(){
-                                    *ah = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::AX(al, ah) = self.registers.get_mut("AX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                let bytes = value.to_le_bytes();
-                                if let Register::AX(al, ah) = self.registers.get_mut("AX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    (Register::BX(_, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::BX(_, bh) = self.registers.get_mut("BX").unwrap(){
-                                    *bh = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::BX(bl, bh) = self.registers.get_mut("BX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                let bytes = value.to_le_bytes();
-                                if let Register::BX(bl, bh) = self.registers.get_mut("BX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    (Register::CX(_, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::CX(_, ch) = self.registers.get_mut("CX").unwrap(){
-                                    *ch = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::CX(cl, ch) = self.registers.get_mut("CX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                let bytes = value.to_le_bytes();
-                                if let Register::CX(cl, ch) = self.registers.get_mut("CX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    (Register::DX(_, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::DX(_, dh) = self.registers.get_mut("DX").unwrap(){
-                                    *dh = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::DX(dl, dh) = self.registers.get_mut("DX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                let bytes = value.to_le_bytes();
-                                if let Register::DX(dl, dh) = self.registers.get_mut("DX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    (Register::EAX(_, _, _, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::EAX(al, _, _, _) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EAX(al, ah, _, _) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EAX(al, ah, axl, axh) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                    *axl = bytes[2];
-                                    *axh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    (Register::EBX(_, _, _, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::EBX(bl, _, _, _) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EBX(bl, bh, _, _) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EBX(bl, bh, bxl, bxh) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                    *bxl = bytes[2];
-                                    *bxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    (Register::ECX(_, _, _, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::ECX(cl, _, _, _) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::ECX(cl, ch, _, _) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::ECX(cl, ch, cxl, cxh) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                    *cxl = bytes[2];
-                                    *cxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    (Register::EDX(_, _, _, _), _) => {
-                        let data = self.memory.data_section.get(address).unwrap();
-                        if data.get_value() == 0 {
-                            println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                            panic!("Program terminated due to invalid memory access");
-                        }
-
-                        match data {
-                            Data::Byte(value) => {
-                                if let Register::EDX(dl, _, _, _) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = *value;
-                                }
-                            },
-                            Data::Word(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EDX(dl, dh, _, _) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                            Data::Dword(value) => {
-                                let bytes = value.to_le_bytes();
-                                if let Register::EDX(dl, dh, dxl, dxh) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                    *dxl = bytes[2];
-                                    *dxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                }
-            },
-            (Operand::Register(register), Operand::Immediate(value)) => {
-                match register {
-                    Register::AX(_, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::AX(al, _) = self.registers.get_mut("AX").unwrap(){
-                                    *al = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::AX(al, ah) = self.registers.get_mut("AX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                println!("Data type mismatch. Expected byte or word, found dword for instruction Mov {:?}, {}\nThis leads data truncation/loss", register, data);
-                                let bytes = data.to_le_bytes();
-                                if let Register::AX(al, ah) = self.registers.get_mut("AX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    Register::BX(_, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::BX(bl, _) = self.registers.get_mut("BX").unwrap(){
-                                    *bl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::BX(bl, bh) = self.registers.get_mut("BX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                println!("Data type mismatch. Expected byte or word, found dword for instruction Mov {:?}, {}\nThis leads data truncation/loss", register, data);
-                                let bytes = data.to_le_bytes();
-                                if let Register::BX(bl, bh) = self.registers.get_mut("BX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    Register::CX(_, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::CX(cl, _) = self.registers.get_mut("CX").unwrap(){
-                                    *cl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::CX(cl, ch) = self.registers.get_mut("CX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                println!("Data type mismatch. Expected byte or word, found dword for instruction Mov {:?}, {}\nThis leads data truncation/loss", register, data);
-                                let bytes = data.to_le_bytes();
-                                if let Register::CX(cl, ch) = self.registers.get_mut("CX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    Register::DX(_, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::DX(dl, _) = self.registers.get_mut("DX").unwrap(){
-                                    *dl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::DX(dl, dh) = self.registers.get_mut("DX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                println!("Data type mismatch. Expected byte or word, found dword for instruction Mov {:?}, {}\nThis leads data truncation/loss", register, data);
-                                let bytes = data.to_le_bytes();
-                                if let Register::DX(dl, dh) = self.registers.get_mut("DX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                        }
-                    },
-                    Register::EAX(_, _, _, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::EAX(al, _, _, _) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EAX(al, ah, _, _) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EAX(al, ah, axl, axh) = self.registers.get_mut("EAX").unwrap(){
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                    *axl = bytes[2];
-                                    *axh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    Register::EBX(_, _, _, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::EBX(bl, _, _, _) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EBX(bl, bh, _, _) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EBX(bl, bh, bxl, bxh) = self.registers.get_mut("EBX").unwrap(){
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                    *bxl = bytes[2];
-                                    *bxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    Register::ECX(_, _, _, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::ECX(cl, _, _, _) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::ECX(cl, ch, _, _) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::ECX(cl, ch, cxl, cxh) = self.registers.get_mut("ECX").unwrap(){
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                    *cxl = bytes[2];
-                                    *cxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                    Register::EDX(_, _, _, _) => {
-                        match value {
-                            Data::Byte(data) => {
-                                if let Register::EDX(dl, _, _, _) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = *data;
-                                }
-                            },
-                            Data::Word(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EDX(dl, dh, _, _) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                }
-                            },
-                            Data::Dword(data) => {
-                                let bytes = data.to_le_bytes();
-                                if let Register::EDX(dl, dh, dxl, dxh) = self.registers.get_mut("EDX").unwrap(){
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                    *dxl = bytes[2];
-                                    *dxh = bytes[3];
-                                }
-                            },
-                        }
-                    },
-                }
-            },
-            (Operand::Memory(address), Operand::Register(register)) => {
-                let address  = match self.memory.data_section.contains_key(address) {
-                    true => {
-                        address
-                    },
-                    false => {
-                        match self.memory.bss_section.contains_key(address) {
-                            true => {
-                                address
-                            },
-                            false => {
-                                println!("Use of undeclared value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                        }
-                    }
-                };
-
-                match register {
-                    Register::AX(_, _) => {
-                        if let Register::AX(al, ah) = self.registers.get_mut("AX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *al = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                    let bytes = value.to_le_bytes();
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                },
-                            }
-
-                        }
-                    },
-                    Register::BX(_, _) => {
-                        if let Register::BX(bl, bh) = self.registers.get_mut("BX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *bl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                    let bytes = value.to_le_bytes();
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                },
-                            }
-
-                        }
-                    },
-                    Register::CX(_, _) => {
-                        if let Register::CX(cl, ch) = self.registers.get_mut("CX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *cl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                    let bytes = value.to_le_bytes();
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                },
-                            }
-                        }
-                    },
-                    Register::DX(_, _) => {
-                        if let Register::DX(dl, dh) = self.registers.get_mut("DX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *dl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    println!("Data type mismatch. Expected byte or word, found dword at address {} for instruction Mov {:?}, {}\nThis leads data truncation/loss", address, register, address);
-                                    let bytes = value.to_le_bytes();
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                },
-                            }
-                        }
-                    },
-                    Register::EAX(_, _, _, _) => {
-                        if let Register::EAX(al, ah, axl, axh) = self.registers.get_mut("EAX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *al = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *al = bytes[0];
-                                    *ah = bytes[1];
-                                    *axl = bytes[2];
-                                    *axh = bytes[3];
-                                },
-                            }
-                        }
-                    },
-                    Register::EBX(_, _, _, _) => {
-                        if let Register::EBX(bl, bh, bxl, bxh) = self.registers.get_mut("EBX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *bl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *bl = bytes[0];
-                                    *bh = bytes[1];
-                                    *bxl = bytes[2];
-                                    *bxh = bytes[3];
-                                },
-                            }
-                        }
-                    },
-                    Register::ECX(_, _, _, _) => {
-                        if let Register::ECX(cl, ch, cxl, cxh) = self.registers.get_mut("ECX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *cl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *cl = bytes[0];
-                                    *ch = bytes[1];
-                                    *cxl = bytes[2];
-                                    *cxh = bytes[3];
-                                },
-                            }
-                        }
-                    },
-                    Register::EDX(_, _, _, _) => {
-                        if let Register::EDX(dl, dh, dxl, dxh) = self.registers.get_mut("EDX").unwrap() {
-                            let data = self.memory.data_section.get(address).unwrap();
-                            if data.get_value() == 0 {
-                                println!("Use of uninitialized value address {} at instruction Mov {:?}, {}", address, register, address);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                            match data {
-                                Data::Byte(value) => {
-                                    *dl = *value;
-                                },
-                                Data::Word(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                },
-                                Data::Dword(value) => {
-                                    let bytes = value.to_le_bytes();
-                                    *dl = bytes[0];
-                                    *dh = bytes[1];
-                                    *dxl = bytes[2];
-                                    *dxh = bytes[3];
-                                },
-                            }
-                        }
-                    },
-                }
-            },
-            (Operand::Memory(address), Operand::Immediate(value)) => {
-                let address = match self.memory.data_section.contains_key(address) {
-                    true => {
-                        address
-                    },
-                    false => {
-                        match self.memory.bss_section.contains_key(address) {
-                            true => {
-                                address
-                            },
-                            false => {
-                                println!("Use of undeclared value address {0} at instruction Mov {0}, {1:?}", address, value);
-                                panic!("Program terminated due to invalid memory access");
-                            }
-                        }
-                    }
-                };
-
-                match value {
-                    Data::Byte(data) => {
-                        if let Some(address_value) = self.memory.data_section.get_mut(address){
-                            match address_value {
-                                Data::Byte(address_data) => {
-                                    *address_data = *data;
-                                },
-                                Data::Word(address_data) => {
-                                    println!("Data type mismatch. Expected byte, found word at address {} for instruction Mov {}, {}\nThis leads memory wastage", address, address, data);
-                                    *address_data = *data as u16;
-                                },
-                                Data::Dword(address_data) => {
-                                    println!("Data type mismatch. Expected byte, found dword at address {} for instruction Mov {}, {}\nThis leads memory wastage", address, address, data);
-                                    *address_data = *data as u32;
-                                }
-                            }
-                        }
-                    },
-                    Data::Word(data) => {
-                        if let Some(address_value) = self.memory.data_section.get_mut(address){
-                            match address_value {
-                                Data::Byte(address_data) => {
-                                    println!("Data type mismatch. Expected word, found byte at address {} for instruction Mov {}, {}\nThis leads data truncation/loss", address, address, data);
-                                    *address_data = (data & 0x00FF) as u8;
-                                },
-                                Data::Word(address_data) => {
-                                    *address_data = *data;
-                                },
-                                Data::Dword(address_data) => {
-                                    println!("Data type mismatch. Expected word, found dword at address {} for instruction Mov {}, {}\nThis leads memory wastage", address, address, data);
-                                    *address_data = *data as u32;
-                                }
-                            }
-                        }
-                    },
-                    Data::Dword(data) => {
-                        if let Some(address_value) = self.memory.data_section.get_mut(address){
-                            match address_value {
-                                Data::Byte(address_data) => {
-                                    println!("Data type mismatch. Expected dword, found byte at address {} for instruction Mov {}, {}\nThis leads data truncation/loss", address, address, data);
-                                    *address_data = (data & 0x000000FF) as u8;
-                                },
-                                Data::Word(address_data) => {
-                                    println!("Data type mismatch. Expected dword, found word at address {} for instruction Mov {}, {}\nThis leads data truncation/loss", address, address, data);
-                                    *address_data = (data & 0x0000FFFF) as u16;
-                                },
-                                Data::Dword(address_data) => {
-                                    *address_data = *data;
-                                }
-                            }
-                        }
-                    },
-                }
-            },
-            _ => {
-                println!("Invalid addressing mode for move instruction Mov {:?},{:?}\nEnsure:\n1. Immediate value isn't used as destination\n2. No memory to memory moves", destination, source);
-                return;
-            }
+    /// The fetch stage operation of CPU's workflow
+    fn fetch(&mut self) {
+            let pc = self.registers.SP[2].get_value();
+            let instruction = self.memory_unit.code_section[pc as usize].clone();
+            self.registers.SP[2].set_value(Data::Word((pc + 1) as u16));
+            self.decode(instruction);
         }
-        self.display_registers();
-    }
 
-    fn execute(&mut self){
-        let instruction = match self.fetch() {
-            Some(i) => i,
-            None => {
-                println!("program terminated successfully");
-                return
-            }
-        };
-
+    /// The decode stage operation of CPU's workflow
+    fn decode(&mut self, instruction: Instruction) {
         match instruction.opcode {
             IS::Mov => {
-                let dest = &instruction.operands.get(0);
-                let src = &instruction.operands.get(1);
+                match instruction.verify_operands() {
+                    false => {
+                        panic!("Invalid operands for MOV instruction at {0:?} Mov expects only 2 operands", instruction);
+                    },
+                    _ => {}
+                }
 
+                let dest = instruction.operands[0].clone();
+                let src = instruction.operands[1].clone();
                 match (dest, src) {
-                    (Some(destination), Some(source)) => {
-                        self.mov(*source, *destination);
+                    (Operand::Register(dest_register), Operand::Register(src_register)) => {
+                        let src_value = self.registers.get_register(src_register).get_value();
+                        let mut dest_reg = self.registers.get_register(dest_register);
+                        match dest_reg {
+                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                        }
+                    },
+                    (Operand::Register(register), Operand::Memory(address)) => {
+                        let src_value = self.memory_unit.data_section[&address].get_value();
+                        let mut dest_reg = self.registers.get_register(register);
+                        match dest_reg {
+                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                        }
+                    },
+                    (Operand::Register(register), Operand::Immediate(value)) => {
+                        let data = value.get_value();
+                        let dest_reg = self.registers.get_register(register);
+                        match dest_reg {
+                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
+                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
+                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
+                            GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
+                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
+                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
+                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
+                            GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
+                        }
+                    },
+                    (Operand::Memory(address), Operand::Register(register)) => {
+                        let src_value = self.registers.get_register(register.clone()).get_value();
+                        if let None = self.memory_unit.data_section.get_mut(&address) {
+                           println!("Use of undeclared memory address: {:?}", address);
+                           panic!("Invalid memory address at {:?}", instruction);
+                        }
+
+                        let data = match self.registers.get_register(register) {
+                            GPRegister::AX(_, _) => Data::Word(src_value as u16),
+                            GPRegister::BX(_, _) => Data::Word(src_value as u16),
+                            GPRegister::CX(_, _) => Data::Word(src_value as u16),
+                            GPRegister::DX(_, _) => Data::Word(src_value as u16),
+                            GPRegister::EAX(_, _, _, _) => Data::Dword(src_value),
+                            GPRegister::EBX(_, _, _, _) => Data::Dword(src_value),
+                            GPRegister::ECX(_, _, _, _) => Data::Dword(src_value),
+                            GPRegister::EDX(_, _, _, _) => Data::Dword(src_value),
+                        };
+
+                        self.memory_unit.data_section.insert(address, data);
+                    },
+                    (Operand::Memory(address), Operand::Immediate(value)) => {
+                        if let None = self.memory_unit.data_section.get_mut(&address) {
+                            println!("Use of undeclared memory address: {:?}", address);
+                            panic!("Invalid memory address at {:?}", instruction);
+                        }
+
+                        self.memory_unit.data_section.insert(address, value);
                     },
                     _ => {
-                        println!("Insufficient operands for move instruction {:?}\nExpected Mov destination, source", instruction);
-                        return;
+                        panic!("Invalid operands for MOV instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
                     }
                 }
-
             },
-            IS::Add => {
-                let dest = &instruction.operands[0];
-                let src = &instruction.operands[1];
-                match (dest, src) {
-                    (Operand::Register(dest_reg), Operand::Register(src_reg)) => {
-
-                    },
-
-                    (Operand::Register(register), Operand::Memory(_)) => {
-
-                    },
-
-                    (Operand::Register(register), Operand::Immediate(_)) => {
-
-                    },
-
-                    (Operand::Memory(_), Operand::Register(register)) => {
-
-                    },
-                    (Operand::Memory(_), Operand::Memory(_)) => {
-
-                    },
-                    (Operand::Memory(_), Operand::Immediate(_)) => {
-
-                    },
-
-                    (Operand::Immediate(_), Operand::Register(register)) => {
-                        println!("Immediate to register addition not allowed")
-                    },
-
-                    (Operand::Immediate(_), Operand::Memory(_)) => {
-                        println!("Immediate to memory addition not allowed")
-                    },
-
-                    (Operand::Immediate(_), Operand::Immediate(_)) => {
-                        println!("Immediate to immediate addition not allowed")
-                    },
-                }
-            },
-            IS::Sub => {
-                let dest = &instruction.operands[0];
-                let src = &instruction.operands[1];
-                match (dest, src) {
-                    (Operand::Register(dest_reg), Operand::Register(src_reg)) => {
-
-                    },
-
-                    (Operand::Register(register), Operand::Memory(_)) => {
-
-                    },
-
-                    (Operand::Register(register), Operand::Immediate(_)) => {
-
-                    },
-
-                    (Operand::Memory(_), Operand::Register(register)) => {
-
-                    },
-                    (Operand::Memory(_), Operand::Memory(_)) => {
-
-                    },
-                    (Operand::Memory(_), Operand::Immediate(_)) => {
-
-                    },
-
-                    (Operand::Immediate(_), Operand::Register(register)) => {
-                        println!("Immediate to register subtraction not allowed")
-                    },
-
-                    (Operand::Immediate(_), Operand::Memory(_)) => {
-                        println!("Immediate to memory subtraction not allowed")
-                    },
-
-                    (Operand::Immediate(_), Operand::Immediate(_)) => {
-                        println!("Immediate to immediate subtraction not allowed")
-                    },
-                }
-            },
-            // IS::Mul => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.mul(dest, src);
-            // },
-            // IS::Div => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.div(dest, src);
-            // },
-            // IS::And => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.and(dest, src);
-            // },
-            // IS::Or => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.or(dest, src);
-            // },
-            // IS::Xor => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.xor(dest, src);
-            // },
-            // IS::Not => {
-            //     let dest = &instruction.operands[0];
-            //     self.not(dest);
-            // },
-            // IS::Cmp => {
-            //     let dest = &instruction.operands[0];
-            //     let src = &instruction.operands[1];
-            //     self.cmp(dest, src);
-            // },
-            // IS::Jmp => {
-            //     let dest = &instruction.operands[0];
-            //     self.jmp(dest);
-            // },
-            // IS::Je => {
-            //     let dest = &instruction.operands[0];
-            //     self.je(dest);
-            // },
-            // IS::Jne => {
-            //     let dest = &instruction.operands[0];
-            //     self.jne(dest);
-            // },
-            // IS::Jg => {
-            //     let dest = &instruction.operands[0];
-            //     self.jg(dest);
-            // },
-            // IS::Jge => {
-            //     let dest = &instruction.operands[0];
-            //     self.jge(dest);
-            // },
-            _ => {
-                println!("Instruction {:?} not implemented yet", instruction.opcode)
-
-            }
+            IS::Add => {},
+            IS::Sub => {},
+            _ => panic!("Unsupported Instruction at {:?}", instruction),
         }
         self.display_registers();
+    }
+
+    fn display_registers(&self) {
+        self.registers.GP.iter().for_each(|reg| {
+            println!("{:?}", reg);
+        });
     }
 }
 
-fn main() {
-
+fn main(){
     let data_section: HashMap<String, Data> = HashMap::from([
-        ("num1".to_string(), Data::Byte(23)),
-        ("num2".to_string(), Data::Word(300)),
-    ]);
-
-    let bss_section: HashMap<String, Data> = HashMap::from([
+        ("num".to_string(), Data::Word(10)),
+        ("num2".to_string(), Data::Word(20)),
         ("result".to_string(), Data::Word(0)),
-        ("test".to_string(), Data::Dword(0)),
     ]);
 
-    let text_section: Vec<Instruction> = vec![
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Register(Register::AX(0, 0)),
-                Operand::Immediate(Data::Byte(23)),
-            ],
-        },
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Register(Register::BX(0, 0)),
-                Operand::Register(Register::AX(0, 0)),
-            ],
-        },
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Memory("num1".to_string()),
-                Operand::Immediate(Data::Dword(0)),
-            ],
-        },
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Memory("num2".to_string()),
-                Operand::Immediate(Data::Byte(0)),
-            ],
-        },
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Register(Register::EAX(0, 0, 0, 0)),
-                Operand::Register(Register::BX(0, 0)),
-            ],
-        },
-        Instruction{
-            opcode: IS::Mov,
-            operands: vec![
-                Operand::Memory("result".to_string()),
-                Operand::Register(Register::EAX(0, 0, 0, 0)),
-            ],
-        },
+    let code_section: Vec<Instruction> = vec![
+        Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(24))]),
+        Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory("num".to_string())]),
+        Instruction::new(IS::Mov, vec![Operand::Register(Register::CX), Operand::Register(Register::AX)]),
+        Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::BX)]),
+        Instruction::new(IS::Mov, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x00FF))]),
     ];
-
-    let program = Program{
-        data_section,
-        bss_section,
-        text_section,
-    };
-
-    let mut cpu = CPU::new(program);
-
-    cpu.display_registers();
+    let mut cpu = CPU::new(data_section, code_section);
     cpu.run();
 }
