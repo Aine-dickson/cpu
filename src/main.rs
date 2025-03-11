@@ -1,6 +1,72 @@
-use std::{collections::HashMap, fmt::Debug};
+/// This is a simple implementation of a CPU in Rust
+/// It is meant to assume simple assembly instructions, say, mov, add, sub, etc.
+/// Example intended usage;
+/// ```
+/// section .data
+/// num1 dw 10       ; First number (16-bit integer)
+/// num2 dw 20       ; Second number (16-bit integer)
+/// result dd 0      ; Variable to store the result
+/// newline db 10    ; Newline character for formatting
 
+/// section .bss
+/// output resb 10   ; Buffer to store the result as a string
 
+/// section .text
+/// global _start
+
+/// _start:
+// / ; Load values from memory
+/// mov eax, [num1]  ; Load first number into EAX
+/// add eax, [num2]  ; Add second number
+
+/// ; Store the result in memory
+/// mov [result], eax
+
+/// ; Convert result to string (integer to ASCII)
+/// mov edi, output  ; Destination buffer
+/// call int_to_str  ; Convert EAX to ASCII string
+
+/// ; Print the result
+/// mov eax, 1       ; syscall: sys_write
+/// mov edi, 1       ; file descriptor: stdout
+/// mov rsi, output  ; buffer
+/// mov rdx, 10      ; max 10 bytes
+/// syscall
+
+/// ; Print newline
+/// mov eax, 1
+/// mov edi, 1
+/// mov rsi, newline
+/// mov rdx, 1
+/// syscall
+
+/// ; Exit program
+/// mov eax, 60      ; syscall: sys_exit
+/// xor edi, edi     ; status 0
+/// syscall
+
+/// ; -----------------------------------
+/// ; Convert integer in EAX to ASCII
+/// ; -----------------------------------
+/// int_to_str:
+/// mov ecx, 10      ; Base 10 divisor
+/// mov ebx, edi     ; Save buffer pointer
+
+/// .loop:
+///     xor edx, edx
+///     div ecx      ; EAX = EAX / 10, remainder in EDX
+///     add dl, '0'  ; Convert to ASCII
+///     dec edi
+///     mov [edi], dl
+///     test eax, eax
+///     jnz .loop
+
+/// mov rsi, edi     ; Update buffer pointer
+/// ret
+///```
+/// The above code is a simple assembly code that adds two numbers and prints the result
+
+use std::{cell::RefCell, collections::HashMap, fmt::Debug};
 
 trait GetValue<T> {
     fn get_value(&self) -> T;
@@ -16,12 +82,18 @@ trait DisplayRegister: std::fmt::Debug {
     }
 }
 
+#[derive(Debug, Clone)]
+/// General Purpose Registers for user interfacing(usage) when writing Instructions
+enum Register{
+    AX, BX, CX, DX,
+    EAX, EBX, ECX, EDX,
+}
+
 #[derive(Debug)]
 /// Registers type used to store different register types of the CPU
 struct Registers{
     GP: [GPRegister; 8],
     SP: [SPRegister; 3],
-    FLAGS: [FLAGS; 9],
 }
 
 impl DisplayRegister for Registers {
@@ -35,50 +107,44 @@ impl DisplayRegister for Registers {
         self.SP.iter().for_each(|reg| {
             println!("{:?}", reg);
         });
-
-        println!("Flags:");
-        self.FLAGS.iter().for_each(|flag| {
-            println!("{:?}", flag);
-        });
     }
 }
 
 impl Registers {
     fn get_register(&mut self, register: Register) -> &mut GPRegister {
         match register {
-            Register::AX => &mut self.GP[0],
-            Register::BX => &mut self.GP[1],
-            Register::CX => &mut self.GP[2],
-            Register::DX => &mut self.GP[3],
-            Register::EAX => &mut self.GP[4],
-            Register::EBX => &mut self.GP[5],
-            Register::ECX => &mut self.GP[6],
-            Register::EDX => &mut self.GP[7],
+            Register::AX => &mut self.GP[0], Register::BX => &mut self.GP[1],
+            Register::CX => &mut self.GP[2], Register::DX => &mut self.GP[3],
+            Register::EAX => &mut self.GP[4], Register::EBX => &mut self.GP[5],
+            Register::ECX => &mut self.GP[6], Register::EDX => &mut self.GP[7],
         }
     }
 }
 
-#[derive(Debug, Clone)]
-/// General Purpose Registers for user interfacing(usage) when writing Instructions
-enum Register{
-    AX, BX, CX, DX,
-    EAX, EBX, ECX, EDX,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 ///General Purpose Registers
 enum GPRegister {
-    AX(u8, u8),
-    BX(u8, u8),
-    CX(u8, u8),
-    DX(u8, u8),
-    EAX(u8, u8, u8, u8),
-    EBX(u8, u8, u8, u8),
-    ECX(u8, u8, u8, u8),
+    AX(u8, u8), BX(u8, u8), CX(u8, u8),
+    DX(u8, u8), EAX(u8, u8, u8, u8),
+    EBX(u8, u8, u8, u8), ECX(u8, u8, u8, u8),
     EDX(u8, u8, u8, u8),
 }
 
 
+impl Debug for GPRegister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GPRegister::AX(a, b) => write!(f, "AX:\n   AL  AH\n   {:02X}  {:02X}\n", a, b),
+            GPRegister::BX(a, b) => write!(f, "BX:\n   BL  BH\n   {:02X}  {:02X}\n", a, b),
+            GPRegister::CX(a, b) => write!(f, "CX:\n   CL  CH\n   {:02X}  {:02X}\n", a, b),
+            GPRegister::DX(a, b) => write!(f, "DX:\n   DL  DH\n   {:02X}  {:02X}\n", a, b),
+            GPRegister::EAX(a, b, c, d) => write!(f, "EAX:\n    AL  AH  EAL  EAH\n     {:02X}  {:02X}  {:02X}   {:02X}\n", a, b, c, d),
+            GPRegister::EBX(a, b, c, d) => write!(f, "EBX:\n    BL  BH  EBL  EBH\n     {:02X}  {:02X}  {:02X}   {:02X}\n", a, b, c, d),
+            GPRegister::ECX(a, b, c, d) => write!(f, "ECX:\n    CL  CH  ECL  ECH\n     {:02X}  {:02X}  {:02X}   {:02X}\n", a, b, c, d),
+            GPRegister::EDX(a, b, c, d) => write!(f, "EDX:\n    DL  DH  EDL  EDH\n     {:02X}  {:02X}  {:02X}   {:02X}\n", a, b, c, d),
+        }
+    }
+}
 
 impl GetValue<u32> for GPRegister {
     fn get_value(&self) -> u32 {
@@ -95,9 +161,6 @@ impl GetValue<u32> for GPRegister {
     }
 }
 
-//TODO: Implementing the SetValue trait for the GPRegister enum
-//TODO: Ensure it stores values as bytes in Little Endian format for the corresponding register
-//TODO: Empty the source register after moving the value to the destination register.
 impl SetValue<Data> for GPRegister {
     fn set_value(&mut self, value: Data) {
         match self {
@@ -345,6 +408,7 @@ impl SetValue<u8> for FLAGS {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 ///! Instruction Set. This is the set of instructions that the CPU can execute.
 /// NB: Not all instructions are implemented.
@@ -371,7 +435,16 @@ impl GetValue<u32> for Data {
             Data::Dword(a) => *a,
         }
     }
-    
+}
+
+impl SetValue<u32> for Data {
+    fn set_value(&mut self, value: u32) {
+        match self {
+            Data::Byte(data) => *data = value as u8,
+            Data::Word(data) => *data = value as u16,
+            Data::Dword(data) => *data = value,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -471,24 +544,44 @@ impl ALU {
         self.mode = mode;
     }
 
+    fn operand_fetch(&mut self, operands: Vec<u8>) {
+        self.buffers = operands;
+    }
+
     /// Executes the operation based on the mode of the ALU
-    fn execute(&mut self, a: u8, b: u8) -> (u8, bool) {
+    fn execute(&mut self) -> (u32, bool) {
         match self.mode {
-            ALUMode::Add => self.add(a, b),
-            ALUMode::Sub => self.sub(a, b),
+            ALUMode::Add => self.add(),
+            ALUMode::Sub => self.sub(),
             ALUMode::Off => panic!("ALU is off"),
             _ => panic!("Unsupported mode not implemented"),
         }
     }
 
     /// Adds two u8 values and returns the result and a boolean indicating if there was an overflow
-    fn add(&mut self, a: u8, b: u8) -> (u8, bool) {
-        a.overflowing_add(b)
+    fn add(&mut self) -> (u32, bool) {
+        let mut result: (u32, bool) = (0, false);
+        let mut operands = self.buffers.iter().peekable();
+
+        while let Some(operand) = operands.peek() {
+            result = result.0.overflowing_add(**operand as u32);
+            operands.next();
+        }
+
+        result
     } 
 
     /// Subtracts two u8 values and returns the result and a boolean indicating if there was an overflow
-    fn sub(&mut self, a: u8, b: u8) -> (u8, bool) {
-        a.overflowing_sub(b)
+    fn sub(&mut self) -> (u32, bool) {
+        let mut result: (u32, bool) = (0, false);
+        let mut operands = self.buffers.iter().peekable();
+
+        while let Some(operand) = operands.peek() {
+            result = result.0.overflowing_sub(**operand as u32);
+            operands.next();
+        }
+
+        result
     }
 }
 
@@ -499,6 +592,7 @@ impl ALU {
 struct CPU {
     alu: ALU,
     registers: Registers,
+    flags: [FLAGS; 9],
     memory_unit: MemoryUnit,
 }
 
@@ -509,13 +603,20 @@ impl CPU {
             registers: Registers {
                 GP: [GPRegister::AX(0, 0), GPRegister::BX(0, 0), GPRegister::CX(0, 0), GPRegister::DX(0, 0), GPRegister::EAX(0, 0, 0, 0), GPRegister::EBX(0, 0, 0, 0), GPRegister::ECX(0, 0, 0, 0), GPRegister::EDX(0, 0, 0, 0)],
                 SP: [SPRegister::SP(0, 0), SPRegister::BP(0, 0), SPRegister::IP(0, 0)],
-                FLAGS: [FLAGS::PF(0), FLAGS::AF(0), FLAGS::ZF(0), FLAGS::SF(0), FLAGS::TF(0), FLAGS::IF(0), FLAGS::DF(0), FLAGS::OF(0), FLAGS::CF(0)],
             },
+            flags: [FLAGS::PF(0), FLAGS::AF(0), FLAGS::ZF(0), FLAGS::SF(0), FLAGS::TF(0), FLAGS::IF(0), FLAGS::DF(0), FLAGS::OF(0), FLAGS::CF(0)],
             memory_unit: MemoryUnit {
                 data_section,
                 code_section,
             },
         }
+    }
+
+    fn preview_flags(&self){
+        println!("Flags:");
+        self.flags.iter().for_each(|flag| {
+            println!("{:?}", flag);
+        });
     }
 
     fn run(&mut self){
@@ -554,8 +655,8 @@ impl CPU {
                 let src = instruction.operands[1].clone();
                 match (dest, src) {
                     (Operand::Register(dest_register), Operand::Register(src_register)) => {
-                        let src_value = self.registers.get_register(src_register).get_value();
-                        let mut dest_reg = self.registers.get_register(dest_register);
+                        let src_value = self.registers.get_register(src_register.clone()).get_value();
+                        let dest_reg = self.registers.get_register(dest_register.clone());
                         match dest_reg {
                             GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
                             GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
@@ -566,10 +667,11 @@ impl CPU {
                             GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
                         }
+                        println!("Data movement occured:\nRegister: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_register, dest_register, dest_reg);
                     },
                     (Operand::Register(register), Operand::Memory(address)) => {
                         let src_value = self.memory_unit.data_section[&address].get_value();
-                        let mut dest_reg = self.registers.get_register(register);
+                        let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
                             GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
                             GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
@@ -580,10 +682,11 @@ impl CPU {
                             GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
                         }
+                        println!("Data movement occured:\nMemory address: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
                     },
                     (Operand::Register(register), Operand::Immediate(value)) => {
                         let data = value.get_value();
-                        let dest_reg = self.registers.get_register(register);
+                        let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
                             GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
                             GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
@@ -594,6 +697,7 @@ impl CPU {
                             GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
                         }
+                        println!("Data movement occured:\nImmediate value: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
                     },
                     (Operand::Memory(address), Operand::Register(register)) => {
                         let src_value = self.registers.get_register(register.clone()).get_value();
@@ -602,7 +706,7 @@ impl CPU {
                            panic!("Invalid memory address at {:?}", instruction);
                         }
 
-                        let data = match self.registers.get_register(register) {
+                        let data = match self.registers.get_register(register.clone()) {
                             GPRegister::AX(_, _) => Data::Word(src_value as u16),
                             GPRegister::BX(_, _) => Data::Word(src_value as u16),
                             GPRegister::CX(_, _) => Data::Word(src_value as u16),
@@ -613,7 +717,8 @@ impl CPU {
                             GPRegister::EDX(_, _, _, _) => Data::Dword(src_value),
                         };
 
-                        self.memory_unit.data_section.insert(address, data);
+                        self.memory_unit.data_section.insert(address.clone(), data.clone());
+                        println!("Data movement occured:\nRegister: {0:?} -> Memory address: {1:?}\nMemory address {1:?} updated to: \n{2:?}\n", register, address, data);
                     },
                     (Operand::Memory(address), Operand::Immediate(value)) => {
                         if let None = self.memory_unit.data_section.get_mut(&address) {
@@ -621,18 +726,153 @@ impl CPU {
                             panic!("Invalid memory address at {:?}", instruction);
                         }
 
-                        self.memory_unit.data_section.insert(address, value);
+                        self.memory_unit.data_section.insert(address.clone(), value.clone());
+                        println!("Data movement occured:\nImmediate value: {0:?} -> Memory address: {1:?}\nMemory address {1:?} updated to: \n{2:?}\n", value, address, value);
                     },
                     _ => {
                         panic!("Invalid operands for MOV instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
                     }
                 }
             },
-            IS::Add => {},
+            IS::Add => {
+                match instruction.verify_operands() {
+                    false => {
+                        panic!("Invalid operands for ADD instruction at {0:?} ADD expects only 2 operands", instruction);
+                    },
+                    _ => self.alu.set_mode(ALUMode::Add)
+                }
+
+                let dest = instruction.operands[0].clone();
+                let src = instruction.operands[1].clone();
+                match (dest, src) {
+                    (Operand::Register(dest_register), Operand::Register(src_register)) => {
+                        let src_value = self.registers.get_register(src_register.clone()).get_value();
+                        let dest_reg = self.registers.get_register(dest_register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
+                        operand_bytes.extend(src_value.to_le_bytes());
+                        self.alu.operand_fetch(operand_bytes);
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match src_register {
+                            Register::AX | Register::BX | 
+                            Register::CX | Register::DX=> dest_reg.set_value(Data::Word(result as u16)),
+                            Register::EAX | Register::EBX |
+                            Register::ECX | Register::EDX => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Data addition occured:\nRegister: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_register, dest_register, dest_reg);
+                    },
+                    (Operand::Register(register), Operand::Memory(address)) => {
+                        let src_value = self.memory_unit.data_section[&address].get_value();
+                        let dest_reg = self.registers.get_register(register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
+                        operand_bytes.extend(src_value.to_le_bytes());
+                        self.alu.operand_fetch(operand_bytes);
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match self.memory_unit.data_section[&address] {
+                            Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
+                            Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
+                            Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Data addition occured:\nMemory address: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
+                    },
+                    (Operand::Register(register), Operand::Immediate(value)) => {
+                        let dest_reg = self.registers.get_register(register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
+                        operand_bytes.extend(value.get_value().to_le_bytes());
+                        self.alu.operand_fetch(operand_bytes);
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match value {
+                            Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
+                            Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
+                            Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Data addition occured:\nImmediate value: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
+                    },
+                    (Operand::Memory(address), Operand::Register(register)) => {
+                        let src_value = self.registers.get_register(register.clone()).get_value();
+                        match self.memory_unit.data_section.get_mut(&address) {
+                            Some(value) => {
+                                let addr_value = value.get_value();
+                                let mut operand_bytes = Vec::from(addr_value.to_le_bytes());
+                                operand_bytes.extend(src_value.to_be_bytes());
+                                self.alu.operand_fetch(operand_bytes);
+
+                                let (result, overflow) = self.alu.execute();
+                                value.set_value(result as u32);
+
+                                match overflow {
+                                    true => self.flags[7].set_value(1),
+                                    false => self.flags[7].set_value(0),
+                                }
+
+                                println!("Data addition occured:\nMemory address value: {0:?}[{3:?}] + Register: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, register, addr_value);
+                            }
+                            None => {
+                                println!("Use of undeclared memory address: {:?}", address);
+                                panic!("Invalid memory address at {:?}", instruction);
+                            }
+                        }
+                    },
+                    (Operand::Memory(address), Operand::Immediate(value)) => {
+                        let src_value = value.get_value();
+                        match self.memory_unit.data_section.get_mut(&address) {
+                            Some(value) => {
+                                let addr_value = value.get_value();
+                                let mut operand_bytes = Vec::from(addr_value.to_le_bytes());
+                                operand_bytes.extend(src_value.to_be_bytes());
+                                self.alu.operand_fetch(operand_bytes);
+
+                                let (result, overflow) = self.alu.execute();
+                                value.set_value(result as u32);
+
+                                match overflow {
+                                    true => self.flags[7].set_value(1),
+                                    false => self.flags[7].set_value(0),
+                                }
+
+                                println!("Data addition occured:\nMemory address value: {0:?}[{3:?}] + Immediate value: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, src_value, addr_value);
+                            }
+                            None => {
+                                println!("Use of undeclared memory address: {:?}", address);
+                                panic!("Invalid memory address at {:?}", instruction);
+                            }
+                        }
+                    },
+                    _ => {
+                        panic!("Invalid operands for ADD instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
+                    }
+                }
+                self.alu.set_mode(ALUMode::Off);
+            },
             IS::Sub => {},
             _ => panic!("Unsupported Instruction at {:?}", instruction),
         }
-        self.display_registers();
     }
 
     fn display_registers(&self) {
@@ -650,11 +890,11 @@ fn main(){
     ]);
 
     let code_section: Vec<Instruction> = vec![
-        Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(24))]),
+        Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(300))]),
         Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory("num".to_string())]),
-        Instruction::new(IS::Mov, vec![Operand::Register(Register::CX), Operand::Register(Register::AX)]),
-        Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::BX)]),
-        Instruction::new(IS::Mov, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x00FF))]),
+        Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::BX)]),
+        Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::CX)]),
+        Instruction::new(IS::Add, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x000F))]),
     ];
     let mut cpu = CPU::new(data_section, code_section);
     cpu.run();
