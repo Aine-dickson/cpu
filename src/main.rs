@@ -66,7 +66,7 @@
 ///```
 /// The above code is a simple assembly code that adds two numbers and prints the result
 
-use std::{cell::RefCell, collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug};
 
 trait GetValue<T> {
     fn get_value(&self) -> T;
@@ -89,6 +89,7 @@ enum Register{
     EAX, EBX, ECX, EDX,
 }
 
+#[allow(non_snake_case)]
 #[derive(Debug)]
 /// Registers type used to store different register types of the CPU
 struct Registers{
@@ -527,14 +528,14 @@ enum ALUMode {
 /// This is the unit that performs arithmetic and logical operations
 /// All operations assume u8 values
 struct ALU{
-    buffers: Vec<u8>,
+    buffer: (u32, u32),
     mode: ALUMode,
 }
 
 impl ALU {
     fn new() -> ALU {
         ALU {
-            buffers: Vec::new(),
+            buffer: (0, 0),
             mode: ALUMode::Off,
         }
     }
@@ -544,8 +545,8 @@ impl ALU {
         self.mode = mode;
     }
 
-    fn operand_fetch(&mut self, operands: Vec<u8>) {
-        self.buffers = operands;
+    fn operand_fetch(&mut self, destination: u32, source: u32) {
+        self.buffer = (destination, source);
     }
 
     /// Executes the operation based on the mode of the ALU
@@ -558,30 +559,15 @@ impl ALU {
         }
     }
 
-    /// Adds two u8 values and returns the result and a boolean indicating if there was an overflow
+    /// Adds the bytes(u8) in buffer of Alu and returns the result and a boolean indicating if there was an overflow
+    /// Returns the sum as u32 and bool representation of overflow sign
     fn add(&mut self) -> (u32, bool) {
-        let mut result: (u32, bool) = (0, false);
-        let mut operands = self.buffers.iter().peekable();
-
-        while let Some(operand) = operands.peek() {
-            result = result.0.overflowing_add(**operand as u32);
-            operands.next();
-        }
-
-        result
+        self.buffer.0.overflowing_add(self.buffer.1)
     } 
 
     /// Subtracts two u8 values and returns the result and a boolean indicating if there was an overflow
     fn sub(&mut self) -> (u32, bool) {
-        let mut result: (u32, bool) = (0, false);
-        let mut operands = self.buffers.iter().peekable();
-
-        while let Some(operand) = operands.peek() {
-            result = result.0.overflowing_sub(**operand as u32);
-            operands.next();
-        }
-
-        result
+        self.buffer.0.overflowing_sub(self.buffer.1)
     }
 }
 
@@ -750,9 +736,7 @@ impl CPU {
                         let dest_reg = self.registers.get_register(dest_register.clone());
                         let dest_value = dest_reg.get_value();
 
-                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
-                        operand_bytes.extend(src_value.to_le_bytes());
-                        self.alu.operand_fetch(operand_bytes);
+                        self.alu.operand_fetch(dest_value, src_value);
 
                         let (result, overflow) = self.alu.execute();
 
@@ -767,16 +751,14 @@ impl CPU {
                             true => self.flags[7].set_value(1),
                             false => self.flags[7].set_value(0),
                         }
-                        println!("Data addition occured:\nRegister: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_register, dest_register, dest_reg);
+                        println!("Data addition occured:\nRegister: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", dest_register, src_register, dest_reg);
                     },
                     (Operand::Register(register), Operand::Memory(address)) => {
                         let src_value = self.memory_unit.data_section[&address].get_value();
                         let dest_reg = self.registers.get_register(register.clone());
                         let dest_value = dest_reg.get_value();
 
-                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
-                        operand_bytes.extend(src_value.to_le_bytes());
-                        self.alu.operand_fetch(operand_bytes);
+                        self.alu.operand_fetch(dest_value, src_value);
 
                         let (result, overflow) = self.alu.execute();
 
@@ -798,7 +780,7 @@ impl CPU {
 
                         let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
                         operand_bytes.extend(value.get_value().to_le_bytes());
-                        self.alu.operand_fetch(operand_bytes);
+                        self.alu.operand_fetch(dest_value, value.get_value());
 
                         let (result, overflow) = self.alu.execute();
 
@@ -819,10 +801,8 @@ impl CPU {
                         match self.memory_unit.data_section.get_mut(&address) {
                             Some(value) => {
                                 let addr_value = value.get_value();
-                                let mut operand_bytes = Vec::from(addr_value.to_le_bytes());
-                                operand_bytes.extend(src_value.to_be_bytes());
-                                self.alu.operand_fetch(operand_bytes);
 
+                                self.alu.operand_fetch(addr_value, src_value);
                                 let (result, overflow) = self.alu.execute();
                                 value.set_value(result as u32);
 
@@ -844,10 +824,8 @@ impl CPU {
                         match self.memory_unit.data_section.get_mut(&address) {
                             Some(value) => {
                                 let addr_value = value.get_value();
-                                let mut operand_bytes = Vec::from(addr_value.to_le_bytes());
-                                operand_bytes.extend(src_value.to_be_bytes());
-                                self.alu.operand_fetch(operand_bytes);
 
+                                self.alu.operand_fetch(addr_value, src_value);
                                 let (result, overflow) = self.alu.execute();
                                 value.set_value(result as u32);
 
@@ -892,6 +870,7 @@ fn main(){
     let code_section: Vec<Instruction> = vec![
         Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(300))]),
         Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory("num".to_string())]),
+        Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::AX)]),
         Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::BX)]),
         Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::CX)]),
         Instruction::new(IS::Add, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x000F))]),
