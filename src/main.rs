@@ -66,7 +66,8 @@
 ///```
 /// The above code is a simple assembly code that adds two numbers and prints the result
 
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, io::{stdin, Read, stdout, Write}};
+
 
 trait GetValue<T> {
     fn get_value(&self) -> T;
@@ -130,7 +131,6 @@ enum GPRegister {
     EBX(u8, u8, u8, u8), ECX(u8, u8, u8, u8),
     EDX(u8, u8, u8, u8),
 }
-
 
 impl Debug for GPRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -416,7 +416,8 @@ impl SetValue<u8> for FLAGS {
 enum IS {
     Mov, Add, Sub,
     Mul, Div, And,
-    Or, Xor, Not
+    Or, Xor, Not,
+    Syscall
 }
 
 #[derive(Debug, Clone)]
@@ -514,6 +515,7 @@ impl Instruction {
 struct MemoryUnit {
     data_section: HashMap<String, Data>,
     code_section: Vec<Instruction>,
+    ram: Vec<u8>
 }
 
 #[derive(Debug)]
@@ -594,10 +596,12 @@ impl CPU {
             memory_unit: MemoryUnit {
                 data_section,
                 code_section,
+                ram: vec![0; 1024],
             },
         }
     }
 
+    #[allow(dead_code)]
     fn preview_flags(&self){
         println!("Flags:");
         self.flags.iter().for_each(|flag| {
@@ -626,6 +630,8 @@ impl CPU {
             self.decode(instruction);
         }
 
+    //TODO: Change data storage from HashMap as kv(address, data) to kv(variable, address)
+    //TODO: Implement storage of data in memory unit(RAM) as bytes
     /// The decode stage operation of CPU's workflow
     fn decode(&mut self, instruction: Instruction) {
         match instruction.opcode {
@@ -848,8 +854,183 @@ impl CPU {
                 }
                 self.alu.set_mode(ALUMode::Off);
             },
-            IS::Sub => {},
+            IS::Sub => {
+                match instruction.verify_operands() {
+                    false => {
+                        panic!("Invalid operands for SUB instruction at {0:?} SUB expects only 2 operands", instruction);
+                    },
+                    _ => self.alu.set_mode(ALUMode::Sub)
+                }
+
+                let dest = instruction.operands[0].clone();
+                let src = instruction.operands[1].clone();
+                match (dest, src) {
+                    (Operand::Register(dest_register), Operand::Register(src_register)) => {
+                        let src_value = self.registers.get_register(src_register.clone()).get_value();
+                        let dest_reg = self.registers.get_register(dest_register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        self.alu.operand_fetch(dest_value, src_value);
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match src_register {
+                            Register::AX | Register::BX | 
+                            Register::CX | Register::DX=> dest_reg.set_value(Data::Word(result as u16)),
+                            Register::EAX | Register::EBX |
+                            Register::ECX | Register::EDX => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Subtraction occured:\nRegister: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", dest_register, src_register, dest_reg);
+                    },
+                    (Operand::Register(register), Operand::Memory(address)) => {
+                        let src_value = self.memory_unit.data_section[&address].get_value();
+                        let dest_reg = self.registers.get_register(register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        self.alu.operand_fetch(dest_value, src_value);
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match self.memory_unit.data_section[&address] {
+                            Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
+                            Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
+                            Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Subtraction occured:\nMemory address: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
+                    },
+                    (Operand::Register(register), Operand::Immediate(value)) => {
+                        let dest_reg = self.registers.get_register(register.clone());
+                        let dest_value = dest_reg.get_value();
+
+                        let mut operand_bytes = Vec::from(dest_value.to_le_bytes());
+                        operand_bytes.extend(value.get_value().to_le_bytes());
+                        self.alu.operand_fetch(dest_value, value.get_value());
+
+                        let (result, overflow) = self.alu.execute();
+
+                        match value {
+                            Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
+                            Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
+                            Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
+                        }
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
+                        }
+                        println!("Subtraction occured:\nImmediate value: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
+                    },
+                    (Operand::Memory(address), Operand::Register(register)) => {
+                        let src_value = self.registers.get_register(register.clone()).get_value();
+                        match self.memory_unit.data_section.get_mut(&address) {
+                            Some(value) => {
+                                let addr_value = value.get_value();
+
+                                self.alu.operand_fetch(addr_value, src_value);
+                                let (result, overflow) = self.alu.execute();
+                                value.set_value(result as u32);
+
+                                match overflow {
+                                    true => self.flags[7].set_value(1),
+                                    false => self.flags[7].set_value(0),
+                                }
+
+                                println!("Subtraction occured:\nMemory address value: {0:?}[{3:?}] - Register: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, register, addr_value);
+                            }
+                            None => {
+                                println!("Use of undeclared memory address: {:?}", address);
+                                panic!("Invalid memory address at {:?}", instruction);
+                            }
+                        }
+                    },
+                    (Operand::Memory(address), Operand::Immediate(value)) => {
+                        let src_value = value.get_value();
+                        match self.memory_unit.data_section.get_mut(&address) {
+                            Some(value) => {
+                                let addr_value = value.get_value();
+
+                                self.alu.operand_fetch(addr_value, src_value);
+                                let (result, overflow) = self.alu.execute();
+                                value.set_value(result as u32);
+
+                                match overflow {
+                                    true => self.flags[7].set_value(1),
+                                    false => self.flags[7].set_value(0),
+                                }
+
+                                println!("Subtraction occured:\nMemory address value: {0:?}[{3:?}] - Immediate value: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, src_value, addr_value);
+                            }
+                            None => {
+                                println!("Use of undeclared memory address: {:?}", address);
+                                panic!("Invalid memory address at {:?}", instruction);
+                            }
+                        }
+                    },
+                    _ => {
+                        panic!("Invalid operands for SUB instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
+                    }
+                }
+                self.alu.set_mode(ALUMode::Off);
+            },
+            IS::Syscall => {
+                match instruction.verify_operands() {
+                    false => {
+                        panic!("Invalid operands for SYSCALL instruction at {0:?} SYSCALL doesn't take any operands", instruction);
+                    },
+                    _ => {}
+                }
+                match self.syscall() {
+                    Ok(_) => {},
+                    Err(err) => {
+                        let description = format!("Error while running Syscall instruction: {:?}\nReason: {:?}", instruction, err);
+                        panic!("{}", description)
+                    },
+                }
+            },
+
             _ => panic!("Unsupported Instruction at {:?}", instruction),
+        }
+    }
+
+    fn syscall(&mut self)-> Result<(), String> {
+        let syscall_number = self.registers.get_register(Register::AX).get_value() as u8;
+        let file_descriptor = self.registers.get_register(Register::BX).get_value() as u8;
+        let data_length = self.registers.get_register(Register::DX).get_value();
+        let data = self.registers.get_register(Register::CX).get_value();
+
+        match syscall_number {
+            1 => {
+                let mut read_buffer = vec![0; data_length as usize];
+                stdin().read_exact(read_buffer.as_mut_slice()).unwrap();
+                let address = ((data_length as u8) << 4) | self.memory_unit.ram.len() as u8;
+                self.memory_unit.ram.extend(read_buffer);
+                self.registers.get_register(Register::CX).set_value(Data::Word(address as u16));
+                Ok(())
+            },
+            2 => {
+                let mut write_buffer = vec![0; data_length as usize];
+                self.memory_unit.ram[data as usize..(data as usize + data_length as usize)].clone_from_slice(write_buffer.as_mut_slice());
+                stdout().write_all(write_buffer.as_mut_slice()).unwrap();
+                Ok(())
+            }
+            60 => {
+                println!("Program exited with code: {}", file_descriptor);
+                std::process::exit(file_descriptor as i32);
+            }
+            _ => {
+                let err_msg = format!("Unknown file systemcall number: {}", syscall_number);
+                Err(err_msg)
+            }
         }
     }
 
@@ -871,9 +1052,9 @@ fn main(){
         Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(300))]),
         Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory("num".to_string())]),
         Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::AX)]),
-        Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::BX)]),
+        Instruction::new(IS::Sub, vec![Operand::Register(Register::CX), Operand::Register(Register::BX)]),
         Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::CX)]),
-        Instruction::new(IS::Add, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x000F))]),
+        Instruction::new(IS::Sub, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x000F))]),
     ];
     let mut cpu = CPU::new(data_section, code_section);
     cpu.run();
