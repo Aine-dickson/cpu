@@ -450,6 +450,12 @@ impl SetValue<u32> for Data {
 }
 
 #[derive(Debug, Clone)]
+enum MemOp {
+    Address(String),
+    Value(String),
+}
+
+#[derive(Debug, Clone)]
 /// Operand type used to store operands for instructions
 /// Usage example:
 /// ```
@@ -462,7 +468,7 @@ impl SetValue<u32> for Data {
 /// ```
 enum Operand {
     Register(Register),
-    Memory(String),
+    Memory(MemOp),
     Immediate(Data),
 }
 
@@ -506,16 +512,6 @@ impl Instruction {
             
         }
     }
-}
-
-#[derive(Debug)]
-/// Memory Unit
-/// This is the unit that stores data and code sections
-/// It is used to simulate the memory of the CPU
-struct MemoryUnit {
-    data_section: HashMap<String, Data>,
-    code_section: Vec<Instruction>,
-    ram: Vec<u8>
 }
 
 #[derive(Debug)]
@@ -574,6 +570,91 @@ impl ALU {
 }
 
 #[derive(Debug)]
+/// Random Access Memory
+/// This is the unit that stores data of the running program
+struct RAM{
+    data: Vec<u8>,
+    capacity: usize,
+}
+
+impl RAM {
+    fn new() -> RAM {
+        RAM {
+            data: Vec::with_capacity(1024),
+            capacity: 1024,
+        }
+    }
+}
+
+#[derive(Debug)]
+/// Memory Unit
+/// This is the unit that stores data and code sections
+/// It is used to simulate the memory of the CPU
+struct MemoryUnit {
+    ///Data section of the memory unit 
+    ///It stores program variables in the form of key(variable name)-value(memory address) pairs
+    data_section: HashMap<String, Data>,
+    ///Code section of the memory unit
+    ///It stores the program instructions
+    code_section: Vec<Instruction>,
+    ///Memory Access bus
+    data_bus: RAM
+}
+
+/// Implementation of the Memory Unit that manages data used by the CPU and running program
+/// It contains the data and code sections of the program and does the read and write operations to main memory
+impl MemoryUnit {
+    fn new(data_section: HashMap<String, Data>, code_section: Vec<Instruction>) -> MemoryUnit {
+        MemoryUnit {
+            data_section,
+            code_section,
+            data_bus: RAM::new(),
+        }
+    }
+
+    fn get_mem_capacity(&self) -> usize {
+        self.data_bus.capacity
+    }
+
+    fn get_data_len(&self) -> usize {
+        self.data_bus.data.len()
+    }
+
+    /// Reads data from the main memory
+    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be read
+    fn read_data(&self, address: u32) -> Vec<u8> {
+        let actual_address = (address as u8) >> 4;
+        let length = address & 0xBFFF;
+        self.data_bus.data[actual_address as usize..(actual_address as u32 + length) as usize].to_vec()
+    }
+
+    /// Writes data to the main memory
+    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be written
+    /// Data is the bytes to be written to memory
+    /// This operation assumes constant data size and doesn't reallocate memory for data exceeding initial data size
+    fn write_data(&mut self, address: u32, data: Vec<u8>) {
+        let length = (address >> 16) as usize;
+        let actual_address = (address & 0xBFFF) as usize;
+        if self.get_mem_capacity() == 0 {
+            panic!("Memory is full");
+        }
+
+        // If the actual address is greater than the length of the data in memory, extend the memory by writing new data
+        if actual_address > self.get_data_len()-1 {
+            self.data_bus.data.extend(data);
+        }
+        // If the actual address is less than the length of the data in memory, re-writes the existing data at the specified address with the new data
+        else {
+            self.data_bus.data[actual_address..(actual_address + data.len())].copy_from_slice(&data);
+            // If the data length is less than the length of the data bus, fill the remaining space with 0
+            if data.len() < length {
+                self.data_bus.data[actual_address + data.len()..(actual_address + length)].fill(0);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 /// Central Processing Unit
 /// This is the main unit that controls the execution of the program
 /// It contains the ALU, Registers and Memory Unit
@@ -596,7 +677,7 @@ impl CPU {
             memory_unit: MemoryUnit {
                 data_section,
                 code_section,
-                ram: vec![0; 1024],
+                data_bus: RAM::new(),
             },
         }
     }
@@ -630,8 +711,6 @@ impl CPU {
             self.decode(instruction);
         }
 
-    //TODO: Change data storage from HashMap as kv(address, data) to kv(variable, address)
-    //TODO: Implement storage of data in memory unit(RAM) as bytes
     /// The decode stage operation of CPU's workflow
     fn decode(&mut self, instruction: Instruction) {
         match instruction.opcode {
@@ -661,23 +740,33 @@ impl CPU {
                         }
                         println!("Data movement occured:\nRegister: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_register, dest_register, dest_reg);
                     },
-                    (Operand::Register(register), Operand::Memory(address)) => {
-                        let src_value = self.memory_unit.data_section[&address].get_value();
+                    (Operand::Register(register), Operand::Memory(memory)) => {
+                        let mut src_value_address = 0;
+                        match memory {
+                            MemOp::Address(address) => {
+                                src_value_address= self.memory_unit.data_section[&address].get_value();
+                            },
+                            MemOp::Value(data) => todo!(),
+                        }
+                        
                         let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
-                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
-                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
-                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
-                            GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
+                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
+                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
+                            GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
+                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
+                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
+                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
+                            GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
                         }
                         println!("Data movement occured:\nMemory address: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
                     },
+
+                    // Create address for the value, store the address in data_section, store the value in memory and address in the register
                     (Operand::Register(register), Operand::Immediate(value)) => {
                         let data = value.get_value();
+                        l
                         let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
                             GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
@@ -1003,23 +1092,30 @@ impl CPU {
     }
 
     fn syscall(&mut self)-> Result<(), String> {
-        let syscall_number = self.registers.get_register(Register::AX).get_value() as u8;
-        let file_descriptor = self.registers.get_register(Register::BX).get_value() as u8;
-        let data_length = self.registers.get_register(Register::DX).get_value();
-        let data = self.registers.get_register(Register::CX).get_value();
+        let syscall_number: u8 = self.registers.get_register(Register::AX).get_value() as u8;
+        let file_descriptor: u8 = self.registers.get_register(Register::BX).get_value() as u8;
+        let data_length: u16  = self.registers.get_register(Register::DX).get_value() as u16;
+        let data_address: u16 = self.registers.get_register(Register::CX).get_value() as u16;
 
+        // Address is packaged as 32 bit number with the upper 16 bits representing the lenght of data, lower 16 bits hold the actual address of data in memory
         match syscall_number {
+            // Read from file descriptor(file or keyboard)
+            // Currently supports only keyboard input
             1 => {
                 let mut read_buffer = vec![0; data_length as usize];
                 stdin().read_exact(read_buffer.as_mut_slice()).unwrap();
-                let address = ((data_length as u8) << 4) | self.memory_unit.ram.len() as u8;
-                self.memory_unit.ram.extend(read_buffer);
+
+                // 
+                let address: u32 = ((data_length << 16) | data_address) as u32;
+                self.memory_unit.write_data(address, read_buffer);
                 self.registers.get_register(Register::CX).set_value(Data::Word(address as u16));
                 Ok(())
             },
+            // Write to file descriptor(file or screen)
+            // Currently supports only screen output
             2 => {
-                let mut write_buffer = vec![0; data_length as usize];
-                self.memory_unit.ram[data as usize..(data as usize + data_length as usize)].clone_from_slice(write_buffer.as_mut_slice());
+                let address = ((data_length << 16) | data_address) as u32;
+                let mut write_buffer = self.memory_unit.read_data(address);
                 stdout().write_all(write_buffer.as_mut_slice()).unwrap();
                 Ok(())
             }
