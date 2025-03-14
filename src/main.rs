@@ -73,8 +73,8 @@ trait GetValue<T> {
     fn get_value(&self) -> T;
 }
 
-trait SetValue<T> {
-    fn set_value(&mut self, value: T);
+trait SetValue<T, U> {
+    fn set_value(&mut self, value: T) -> U;
 }
 
 trait DisplayRegister: std::fmt::Debug {
@@ -150,19 +150,15 @@ impl Debug for GPRegister {
 impl GetValue<u32> for GPRegister {
     fn get_value(&self) -> u32 {
         match self {
-            GPRegister::AX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
-            GPRegister::BX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
-            GPRegister::CX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            GPRegister::AX(a, b) | GPRegister::BX(a, b) | GPRegister::CX(a, b) |
             GPRegister::DX(a, b) => u16::from_le_bytes([*a, *b]) as u32,
-            GPRegister::EAX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
-            GPRegister::EBX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
-            GPRegister::ECX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
+            GPRegister::EAX(a, b, c, d) | GPRegister::EBX(a, b, c, d) | GPRegister::ECX(a, b, c, d) |
             GPRegister::EDX(a, b, c, d) => u32::from_le_bytes([*a, *b, *c, *d]),
         }
     }
 }
 
-impl SetValue<Data> for GPRegister {
+impl SetValue<Data, ()> for GPRegister {
     fn set_value(&mut self, value: Data) {
         match self {
             GPRegister::AX(_, ah) => {
@@ -311,14 +307,13 @@ enum SPRegister {
 impl GetValue<u32>for SPRegister {
     fn get_value(&self) -> u32 {
         match self {
-            SPRegister::SP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
-            SPRegister::BP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
+            SPRegister::SP(a, b) | SPRegister::BP(a, b) |
             SPRegister::IP(a, b) => u16::from_le_bytes([*a, *b]) as u32,
         }
     }
 }
 
-impl SetValue<Data> for SPRegister {
+impl SetValue<Data, ()> for SPRegister {
     fn set_value(&mut self, value: Data) {
         match self {
             SPRegister::SP(_, b) => {
@@ -388,22 +383,18 @@ enum FLAGS {
 impl GetValue<u8> for FLAGS {
     fn get_value(&self) -> u8 {
         match self {
-            FLAGS::AF(a) => *a, FLAGS::ZF(a) => *a,
-            FLAGS::SF(a) => *a, FLAGS::TF(a) => *a,
-            FLAGS::IF(a) => *a, FLAGS::DF(a) => *a,
-            FLAGS::OF(a) => *a, FLAGS::CF(a) => *a,
+            FLAGS::AF(a) | FLAGS::ZF(a) | FLAGS::SF(a) | FLAGS::TF(a) |
+            FLAGS::IF(a) | FLAGS::DF(a) | FLAGS::OF(a) | FLAGS::CF(a) |
             FLAGS::PF(a) => *a,
         }
     }
 }
 
-impl SetValue<u8> for FLAGS {
+impl SetValue<u8, ()> for FLAGS {
     fn set_value(&mut self, value: u8) {
         match self {
-            FLAGS::ZF(a) => *a = value, FLAGS::SF(a) => *a = value,
-            FLAGS::TF(a) => *a = value, FLAGS::IF(a) => *a = value,
-            FLAGS::DF(a) => *a = value, FLAGS::OF(a) => *a = value,
-            FLAGS::CF(a) => *a = value, FLAGS::PF(a) => *a = value,
+            FLAGS::ZF(a) | FLAGS::SF(a) | FLAGS::TF(a) | FLAGS::IF(a) |
+            FLAGS::DF(a) | FLAGS::OF(a) | FLAGS::CF(a) | FLAGS::PF(a) |
             FLAGS::AF(a) => *a = value,
         }
     }
@@ -439,24 +430,70 @@ impl GetValue<u32> for Data {
     }
 }
 
-impl SetValue<u32> for Data {
-    fn set_value(&mut self, value: u32) {
+impl SetValue<u32, Data> for Data {
+    fn set_value(&mut self, value: u32)-> Self {
         match self {
-            Data::Byte(data) => *data = value as u8,
-            Data::Word(data) => *data = value as u16,
-            Data::Dword(data) => *data = value,
+            Data::Byte(data) => {
+                *data = value as u8;
+                Data::Byte(*data)
+            },
+            Data::Word(data) => {
+                *data = value as u16;
+                Data::Word(*data)
+            },
+            Data::Dword(data) => {
+                *data = value;
+                Data::Dword(*data)
+            },
         }
     }
 }
 
 #[derive(Debug, Clone)]
 enum MemOp {
+    ///Memory address. This is interpreted as ```[label]``` 
+    /// # Example:
+    /// 
+    /// this
+    ///  ```
+    /// Instruction::new(
+    ///     IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate((Data::Word(0x00FF))]
+    /// );
+    /// Instruction
+    ///     IS::Mov, vec![Operand::Memory(MemOp::Address("label".to_owned())), Operand::Register(Register::AX)]
+    /// );
+    /// ``` 
+    /// is interpreted as
+    /// ```
+    /// mov ax, 0x00FF
+    /// mov [label], ax
+    /// ```
     Address(String),
-    Value(String),
+
+    ///Value. This is interpreted as `data/raw value`
+    /// # Example:
+    /// 
+    /// this 
+    /// ```
+    /// Instruction::new(
+    ///     IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate((Data::Word(0x00FF))]
+    /// );
+    /// Instruction::new(
+    ///     IS::Mov, vec![Operand::Memory(MemOp::Value("address".to_owned())), Operand::Register(Register::AX)]
+    /// );
+    /// ``` 
+    /// is interpreted as
+    /// ```
+    /// mov ax, 0x00FF
+    /// mov address, ax
+    /// ```
+    /// This would lead to an error as the first operand is expected to be an address/memory location
+    Label(String),
 }
 
 #[derive(Debug, Clone)]
 /// Operand type used to store operands for instructions
+/// 
 /// Usage example:
 /// ```
 /// Instruction::new(
@@ -464,6 +501,7 @@ enum MemOp {
 /// );
 /// ```
 /// This example moves the value 0x00FF to the AX register
+/// 
 /// It simulates the instruction `MOV AX, 0x00FF` in x86 assembly
 /// ```
 enum Operand {
@@ -522,9 +560,11 @@ enum ALUMode {
 }
 
 #[derive(Debug)]
-/// Arithmetic Logic Unit
-/// This is the unit that performs arithmetic and logical operations
-/// All operations assume u8 values
+/// Arithmetic Logic Unit.
+/// 
+/// This is the unit that performs arithmetic and logical operations.
+/// 
+/// All operations assume u8 values.
 struct ALU{
     buffer: (u32, u32),
     mode: ALUMode,
@@ -570,8 +610,9 @@ impl ALU {
 }
 
 #[derive(Debug)]
-/// Random Access Memory
-/// This is the unit that stores data of the running program
+/// Random Access Memory.
+/// 
+/// This is the unit that stores data of the running program.
 struct RAM{
     data: Vec<u8>,
     capacity: usize,
@@ -587,22 +628,28 @@ impl RAM {
 }
 
 #[derive(Debug)]
-/// Memory Unit
-/// This is the unit that stores data and code sections
-/// It is used to simulate the memory of the CPU
+/// Memory Unit.
+/// 
+/// This is the unit that stores data and code sections.
+/// 
+/// It is used to simulate the memory of the CPU.
 struct MemoryUnit {
-    ///Data section of the memory unit 
-    ///It stores program variables in the form of key(variable name)-value(memory address) pairs
+    ///Data section of the memory unit. 
+    /// 
+    ///It stores program variables in the form of key(label)-value(memory address) pairs.
+    /// 
     data_section: HashMap<String, Data>,
-    ///Code section of the memory unit
-    ///It stores the program instructions
+    ///Code section of the memory unit.
+    /// 
+    ///It stores the program instructions.
     code_section: Vec<Instruction>,
-    ///Memory Access bus
+    ///Memory Access bus.
     data_bus: RAM
 }
 
-/// Implementation of the Memory Unit that manages data used by the CPU and running program
-/// It contains the data and code sections of the program and does the read and write operations to main memory
+/// Implementation of the Memory Unit that manages data used by the CPU and running program.
+/// 
+/// It contains the data and code sections of the program and does the read and write operations to main memory.
 impl MemoryUnit {
     fn new(data_section: HashMap<String, Data>, code_section: Vec<Instruction>) -> MemoryUnit {
         MemoryUnit {
@@ -620,33 +667,37 @@ impl MemoryUnit {
         self.data_bus.data.len()
     }
 
-    /// Reads data from the main memory
-    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be read
+    /// Reads data from the main memory.
+    /// 
+    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be read.
     fn read_data(&self, address: u32) -> Vec<u8> {
         let actual_address = (address as u8) >> 4;
         let length = address & 0xBFFF;
         self.data_bus.data[actual_address as usize..(actual_address as u32 + length) as usize].to_vec()
     }
 
-    /// Writes data to the main memory
-    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be written
-    /// Data is the bytes to be written to memory
-    /// This operation assumes constant data size and doesn't reallocate memory for data exceeding initial data size
+    /// Writes data to the main memory.
+    /// 
+    /// Address is a code that contains the actual index of required bytes in the RAM Vec as data and the length of data to be written.
+    /// 
+    /// Data is the bytes to be written to memory.
+    /// 
+    /// This operation assumes constant data size and doesn't reallocate memory for data exceeding initial data size.
     fn write_data(&mut self, address: u32, data: Vec<u8>) {
         let length = (address >> 16) as usize;
         let actual_address = (address & 0xBFFF) as usize;
-        if self.get_mem_capacity() == 0 {
-            panic!("Memory is full");
-        }
 
-        // If the actual address is greater than the length of the data in memory, extend the memory by writing new data
+        // If the actual address is greater than the length of the data in memory, extend the memory by writing new data.
         if actual_address > self.get_data_len()-1 {
+            if self.get_mem_capacity() == 0 {
+                panic!("Memory is full");
+            }
             self.data_bus.data.extend(data);
         }
-        // If the actual address is less than the length of the data in memory, re-writes the existing data at the specified address with the new data
+        // If the actual address is less than the length of the data in memory, re-writes the existing data at the specified address with the new data.
         else {
             self.data_bus.data[actual_address..(actual_address + data.len())].copy_from_slice(&data);
-            // If the data length is less than the length of the data bus, fill the remaining space with 0
+            // If the data length is less than the length of the data bus, fill the remaining space with 0.
             if data.len() < length {
                 self.data_bus.data[actual_address + data.len()..(actual_address + length)].fill(0);
             }
@@ -655,9 +706,11 @@ impl MemoryUnit {
 }
 
 #[derive(Debug)]
-/// Central Processing Unit
-/// This is the main unit that controls the execution of the program
-/// It contains the ALU, Registers and Memory Unit
+/// Central Processing Unit.
+/// 
+/// This is the main unit that controls the execution of the program.
+/// 
+/// It contains the ALU, Registers and Memory Unit.
 struct CPU {
     alu: ALU,
     registers: Registers,
@@ -667,7 +720,7 @@ struct CPU {
 
 impl CPU {
     fn new(data_section: HashMap<String, Data>, code_section: Vec<Instruction>)-> CPU {
-        CPU {
+        let mut cpu = CPU {
             alu: ALU::new(),
             registers: Registers {
                 GP: [GPRegister::AX(0, 0), GPRegister::BX(0, 0), GPRegister::CX(0, 0), GPRegister::DX(0, 0), GPRegister::EAX(0, 0, 0, 0), GPRegister::EBX(0, 0, 0, 0), GPRegister::ECX(0, 0, 0, 0), GPRegister::EDX(0, 0, 0, 0)],
@@ -679,7 +732,9 @@ impl CPU {
                 code_section,
                 data_bus: RAM::new(),
             },
-        }
+        };
+        cpu.store_lable_data();
+        cpu
     }
 
     #[allow(dead_code)]
@@ -703,7 +758,35 @@ impl CPU {
         }
     }
 
-    /// The fetch stage operation of CPU's workflow
+    fn store_lable_data(&mut self) {
+        for (i, (_, data)) in self.memory_unit.data_section.iter_mut().enumerate() {
+            match data {
+                Data::Byte(value) => {
+                    let address = 1 << 16 | (i  as u32);
+                    self.memory_unit.data_bus.data.push(*value);
+                    self.memory_unit.data_bus.capacity -= 1;
+                    data.set_value(address);
+                },
+                Data::Word(value) => {
+                    let bytes = value.to_le_bytes();
+                    let address = 2 << 16 | (i as u32);
+                    self.memory_unit.data_bus.data.extend(bytes.to_vec());
+                    self.memory_unit.data_bus.capacity -= 2;
+                    data.set_value(address);
+                },
+                Data::Dword(value) => {
+                    let bytes = value.to_le_bytes();
+                    let address = 4 << 16 | (i as u32);
+                    self.memory_unit.data_bus.data.extend(bytes.to_vec());
+                    self.memory_unit.data_bus.capacity -= 4;
+                    data.set_value(address);
+                },
+                
+            }
+        }
+    }
+
+    /// The fetch stage operation of CPU's workflow.
     fn fetch(&mut self) {
             let pc = self.registers.SP[2].get_value();
             let instruction = self.memory_unit.code_section[pc as usize].clone();
@@ -711,7 +794,7 @@ impl CPU {
             self.decode(instruction);
         }
 
-    /// The decode stage operation of CPU's workflow
+    /// The decode stage operation of CPU's workflow.
     fn decode(&mut self, instruction: Instruction) {
         match instruction.opcode {
             IS::Mov => {
@@ -729,86 +812,114 @@ impl CPU {
                         let src_value = self.registers.get_register(src_register.clone()).get_value();
                         let dest_reg = self.registers.get_register(dest_register.clone());
                         match dest_reg {
-                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
+                            GPRegister::AX(_, _) | GPRegister::BX(_, _) | GPRegister::CX(_, _) |
                             GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value as u16)),
-                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
-                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
-                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
+                            GPRegister::EAX(_, _, _, _) | GPRegister::EBX(_, _, _, _) | GPRegister::ECX(_, _, _, _) |
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value)),
                         }
                         println!("Data movement occured:\nRegister: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_register, dest_register, dest_reg);
                     },
-                    (Operand::Register(register), Operand::Memory(memory)) => {
+                    (Operand::Register(register), Operand::Memory(operand)) => {
                         let mut src_value_address = 0;
-                        match memory {
-                            MemOp::Address(address) => {
-                                src_value_address= self.memory_unit.data_section[&address].get_value();
-                            },
-                            MemOp::Value(data) => todo!(),
-                        }
+
+                        // Extract the data from memory if the operand is an address
+                        // Extract the memory address from the data section if the operand is a label
+                        match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        let data = self.memory_unit.read_data(value.get_value());
+                                        src_value_address = u32::from_le_bytes(data.as_slice().try_into().unwrap());
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
+                                }
+                            }
+                            MemOp::Label(data) => {
+                                match self.memory_unit.data_section.get(&data) {
+                                    Some(value) => {
+                                        src_value_address = value.get_value();
+                                    }
+                                    None => {
+                                        println!("Use of undeclared lable: {:?}", data);
+                                        panic!("Invalid label usage at {:?}", instruction);
+                                    }
+                                }
+                            }
+                        };
                         
                         let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
-                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
-                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
-                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
+                            GPRegister::AX(_, _) | GPRegister::BX(_, _) | GPRegister::CX(_, _) |
                             GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(src_value_address as u16)),
-                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
-                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
-                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
+                            GPRegister::EAX(_, _, _, _) | GPRegister::EBX(_, _, _, _) | GPRegister::ECX(_, _, _, _) |
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(src_value_address)),
                         }
-                        println!("Data movement occured:\nMemory address: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
+                        println!("Data movement occured:\nMemory address: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", src_value_address, register, dest_reg);
                     },
 
                     // Create address for the value, store the address in data_section, store the value in memory and address in the register
                     (Operand::Register(register), Operand::Immediate(value)) => {
                         let data = value.get_value();
-                        l
                         let dest_reg = self.registers.get_register(register.clone());
                         match dest_reg {
-                            GPRegister::AX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
-                            GPRegister::BX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
-                            GPRegister::CX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
+                            GPRegister::AX(_, _) | GPRegister::BX(_, _) | GPRegister::CX(_, _) |
                             GPRegister::DX(_, _) => dest_reg.set_value(Data::Word(data as u16)),
-                            GPRegister::EAX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
-                            GPRegister::EBX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
-                            GPRegister::ECX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
+                            GPRegister::EAX(_, _, _, _) | GPRegister::EBX(_, _, _, _) | GPRegister::ECX(_, _, _, _) |
                             GPRegister::EDX(_, _, _, _) => dest_reg.set_value(Data::Dword(data)),
                         }
                         println!("Data movement occured:\nImmediate value: {0:?} -> Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
                     },
-                    (Operand::Memory(address), Operand::Register(register)) => {
+                    (Operand::Memory(operand), Operand::Register(register)) => {
                         let src_value = self.registers.get_register(register.clone()).get_value();
-                        if let None = self.memory_unit.data_section.get_mut(&address) {
-                           println!("Use of undeclared memory address: {:?}", address);
+
+                        let label = match operand {
+                            MemOp::Address(label) => {
+                                label
+                            }
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            }
+                        };
+
+                        // Check if the memory address exists in the data section
+                        if let None = self.memory_unit.data_section.get_mut(&label) {
+                           println!("Use of undeclared memory address: {:?}", label);
                            panic!("Invalid memory address at {:?}", instruction);
                         }
 
+                        // Extract the data from the register to store in the memory address
                         let data = match self.registers.get_register(register.clone()) {
-                            GPRegister::AX(_, _) => Data::Word(src_value as u16),
-                            GPRegister::BX(_, _) => Data::Word(src_value as u16),
-                            GPRegister::CX(_, _) => Data::Word(src_value as u16),
+                            GPRegister::AX(_, _) | GPRegister::BX(_, _) | GPRegister::CX(_, _) | 
                             GPRegister::DX(_, _) => Data::Word(src_value as u16),
-                            GPRegister::EAX(_, _, _, _) => Data::Dword(src_value),
-                            GPRegister::EBX(_, _, _, _) => Data::Dword(src_value),
-                            GPRegister::ECX(_, _, _, _) => Data::Dword(src_value),
+                            GPRegister::EAX(_, _, _, _) | GPRegister::EBX(_, _, _, _) | GPRegister::ECX(_, _, _, _) |
                             GPRegister::EDX(_, _, _, _) => Data::Dword(src_value),
                         };
 
-                        self.memory_unit.data_section.insert(address.clone(), data.clone());
-                        println!("Data movement occured:\nRegister: {0:?} -> Memory address: {1:?}\nMemory address {1:?} updated to: \n{2:?}\n", register, address, data);
+                        let address = self.memory_unit.data_section[&label].get_value();
+                        self.memory_unit.write_data(address, data.get_value().to_le_bytes().to_vec());
+                        println!("Data movement occured:\nRegister: {0:?} -> Memory address: [{1:?}]\nMemory address {1:?} updated to: \n{2:?}\n", register, label, data);
                     },
-                    (Operand::Memory(address), Operand::Immediate(value)) => {
-                        if let None = self.memory_unit.data_section.get_mut(&address) {
-                            println!("Use of undeclared memory address: {:?}", address);
+                    (Operand::Memory(operand), Operand::Immediate(value)) => {
+                        let label = match operand {
+                            MemOp::Address(label) => {
+                                label
+                            }
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            }
+                        };
+                        if let None = self.memory_unit.data_section.get_mut(&label) {
+                            println!("Use of undeclared memory address: {:?}", label);
                             panic!("Invalid memory address at {:?}", instruction);
                         }
-
-                        self.memory_unit.data_section.insert(address.clone(), value.clone());
-                        println!("Data movement occured:\nImmediate value: {0:?} -> Memory address: {1:?}\nMemory address {1:?} updated to: \n{2:?}\n", value, address, value);
+                        let address = self.memory_unit.data_section[&label].get_value();
+                        self.memory_unit.write_data(address, value.get_value().to_le_bytes().to_vec());
+                        println!("Data movement occured:\nImmediate value: {0:?} -> Memory address: [{1:?}]\nMemory address {1:?} updated to: \n{2:?}\n", value, label, value);
                     },
                     _ => {
                         panic!("Invalid operands for MOV instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
@@ -848,16 +959,35 @@ impl CPU {
                         }
                         println!("Data addition occured:\nRegister: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", dest_register, src_register, dest_reg);
                     },
-                    (Operand::Register(register), Operand::Memory(address)) => {
-                        let src_value = self.memory_unit.data_section[&address].get_value();
+                    (Operand::Register(register), Operand::Memory(operand)) => {
+                        let (label, address) = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        (label, value)
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
+                                }
+                            }
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            }
+                        };
+
                         let dest_reg = self.registers.get_register(register.clone());
                         let dest_value = dest_reg.get_value();
+                        let src_data = self.memory_unit.read_data(address.get_value());
+                        let src_value = u32::from_le_bytes(src_data.as_slice().try_into().unwrap());
 
                         self.alu.operand_fetch(dest_value, src_value);
 
                         let (result, overflow) = self.alu.execute();
 
-                        match self.memory_unit.data_section[&address] {
+                        match address {
                             Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
                             Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
                             Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
@@ -867,7 +997,7 @@ impl CPU {
                             true => self.flags[7].set_value(1),
                             false => self.flags[7].set_value(0),
                         }
-                        println!("Data addition occured:\nMemory address: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
+                        println!("Data addition occured:\nMemory address: [{0:?}] + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", label, register, dest_reg);
                     },
                     (Operand::Register(register), Operand::Immediate(value)) => {
                         let dest_reg = self.registers.get_register(register.clone());
@@ -891,51 +1021,74 @@ impl CPU {
                         }
                         println!("Data addition occured:\nImmediate value: {0:?} + Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
                     },
-                    (Operand::Memory(address), Operand::Register(register)) => {
+                    (Operand::Memory(operand), Operand::Register(register)) => {
                         let src_value = self.registers.get_register(register.clone()).get_value();
-                        match self.memory_unit.data_section.get_mut(&address) {
-                            Some(value) => {
-                                let addr_value = value.get_value();
 
-                                self.alu.operand_fetch(addr_value, src_value);
-                                let (result, overflow) = self.alu.execute();
-                                value.set_value(result as u32);
-
-                                match overflow {
-                                    true => self.flags[7].set_value(1),
-                                    false => self.flags[7].set_value(0),
+                        let address = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        value.get_value()
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
                                 }
+                            },
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            },
+                        };
+                        let addr_data = self.memory_unit.read_data(address);
+                        let addr_value = u32::from_le_bytes(addr_data.as_slice().try_into().unwrap());
+                        self.alu.operand_fetch(addr_value, src_value);
+                        let (result, overflow) = self.alu.execute();
 
-                                println!("Data addition occured:\nMemory address value: {0:?}[{3:?}] + Register: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, register, addr_value);
-                            }
-                            None => {
-                                println!("Use of undeclared memory address: {:?}", address);
-                                panic!("Invalid memory address at {:?}", instruction);
-                            }
+                        self.memory_unit.write_data(address, result.to_le_bytes().to_vec());
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
                         }
+
+                        println!("Data addition occured:\nMemory address value: [{0:?}]: {3:?} + Register: {2:?}\nMemory address [{0:?}] updated to: \n{1:?}", address, result, register, addr_value);
+                            
                     },
-                    (Operand::Memory(address), Operand::Immediate(value)) => {
+                    (Operand::Memory(operand), Operand::Immediate(value)) => {
                         let src_value = value.get_value();
-                        match self.memory_unit.data_section.get_mut(&address) {
-                            Some(value) => {
-                                let addr_value = value.get_value();
 
-                                self.alu.operand_fetch(addr_value, src_value);
-                                let (result, overflow) = self.alu.execute();
-                                value.set_value(result as u32);
-
-                                match overflow {
-                                    true => self.flags[7].set_value(1),
-                                    false => self.flags[7].set_value(0),
+                        let (address, label) = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        (value.get_value(), label)
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
                                 }
+                            },
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            }
+                        };
 
-                                println!("Data addition occured:\nMemory address value: {0:?}[{3:?}] + Immediate value: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, src_value, addr_value);
-                            }
-                            None => {
-                                println!("Use of undeclared memory address: {:?}", address);
-                                panic!("Invalid memory address at {:?}", instruction);
-                            }
+                        let addr_data = self.memory_unit.read_data(address);
+                        let addr_value = u32::from_le_bytes(addr_data.as_slice().try_into().unwrap());
+
+                        self.alu.operand_fetch(addr_value, src_value);
+                        let (result, overflow) = self.alu.execute();
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
                         }
+
+                        println!("Data addition occured:\nMemory address value: [{0:?}]: {3:?} + Immediate value: {2:?}\nMemory address [{0:?}] updated to: \n{1:?}", label, result, src_value, addr_value);
                     },
                     _ => {
                         panic!("Invalid operands for ADD instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
@@ -976,8 +1129,27 @@ impl CPU {
                         }
                         println!("Subtraction occured:\nRegister: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", dest_register, src_register, dest_reg);
                     },
-                    (Operand::Register(register), Operand::Memory(address)) => {
-                        let src_value = self.memory_unit.data_section[&address].get_value();
+                    (Operand::Register(register), Operand::Memory(operand)) => {
+
+                        let (address, src_value, label) = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        let src_value = self.memory_unit.read_data(value.get_value());
+                                        (value, u32::from_le_bytes(src_value.as_slice().try_into().unwrap()), label)
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
+                                }
+                            },
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            },
+                        };
+
                         let dest_reg = self.registers.get_register(register.clone());
                         let dest_value = dest_reg.get_value();
 
@@ -985,7 +1157,7 @@ impl CPU {
 
                         let (result, overflow) = self.alu.execute();
 
-                        match self.memory_unit.data_section[&address] {
+                        match address {
                             Data::Byte(_) => dest_reg.set_value(Data::Byte(result as u8)),
                             Data::Word(_) => dest_reg.set_value(Data::Word(result as u16)),
                             Data::Dword(_) => dest_reg.set_value(Data::Dword(result)),
@@ -995,7 +1167,7 @@ impl CPU {
                             true => self.flags[7].set_value(1),
                             false => self.flags[7].set_value(0),
                         }
-                        println!("Subtraction occured:\nMemory address: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", address, register, dest_reg);
+                        println!("Subtraction occured:\nMemory address: [{0:?}] - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", label, register, dest_reg);
                     },
                     (Operand::Register(register), Operand::Immediate(value)) => {
                         let dest_reg = self.registers.get_register(register.clone());
@@ -1019,51 +1191,69 @@ impl CPU {
                         }
                         println!("Subtraction occured:\nImmediate value: {0:?} - Register: {1:?}\nRegister {1:?} updated to: \n{2:?}", value, register, dest_reg);
                     },
-                    (Operand::Memory(address), Operand::Register(register)) => {
+                    (Operand::Memory(operand), Operand::Register(register)) => {
                         let src_value = self.registers.get_register(register.clone()).get_value();
-                        match self.memory_unit.data_section.get_mut(&address) {
-                            Some(value) => {
-                                let addr_value = value.get_value();
 
-                                self.alu.operand_fetch(addr_value, src_value);
-                                let (result, overflow) = self.alu.execute();
-                                value.set_value(result as u32);
-
-                                match overflow {
-                                    true => self.flags[7].set_value(1),
-                                    false => self.flags[7].set_value(0),
+                        let (address_value, label) = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        let addr_data = self.memory_unit.read_data(value.get_value());
+                                        (u32::from_le_bytes(addr_data.as_slice().try_into().unwrap()), label)
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
                                 }
+                            },
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            },
+                        };
+                        
+                        self.alu.operand_fetch(src_value, src_value);
+                        let (result, overflow) = self.alu.execute();
 
-                                println!("Subtraction occured:\nMemory address value: {0:?}[{3:?}] - Register: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, register, addr_value);
-                            }
-                            None => {
-                                println!("Use of undeclared memory address: {:?}", address);
-                                panic!("Invalid memory address at {:?}", instruction);
-                            }
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
                         }
+
+                        println!("Subtraction occured:\nMemory address value: [{0:?}]: {1:?} - Register: {2:?}\nMemory address [{0:?}] updated to: \n{3:?}", label, address_value, register, result);
                     },
-                    (Operand::Memory(address), Operand::Immediate(value)) => {
+                    (Operand::Memory(operand), Operand::Immediate(value)) => {
                         let src_value = value.get_value();
-                        match self.memory_unit.data_section.get_mut(&address) {
-                            Some(value) => {
-                                let addr_value = value.get_value();
 
-                                self.alu.operand_fetch(addr_value, src_value);
-                                let (result, overflow) = self.alu.execute();
-                                value.set_value(result as u32);
-
-                                match overflow {
-                                    true => self.flags[7].set_value(1),
-                                    false => self.flags[7].set_value(0),
+                        let (addr_value, label) = match operand {
+                            MemOp::Address(label) => {
+                                match self.memory_unit.data_section.get(&label) {
+                                    Some(value) => {
+                                        let addr_data = self.memory_unit.read_data(value.get_value());
+                                        (u32::from_le_bytes(addr_data.as_slice().try_into().unwrap()), label)
+                                    }
+                                    None => {
+                                        println!("Use of undeclared memory address: [{:?}]", label);
+                                        panic!("Invalid memory address at {:?}", instruction);
+                                    }
                                 }
+                            }
+                            MemOp::Label(data) => {
+                                println!("Invalid memory address: {:?} at instruction {:?}", data, instruction);
+                                panic!("Expected an address/memory location, found a value");
+                            }
+                        };
 
-                                println!("Subtraction occured:\nMemory address value: {0:?}[{3:?}] - Immediate value: {2:?}\nMemory address {0:?} updated to: \n{1:?}", address, value, src_value, addr_value);
-                            }
-                            None => {
-                                println!("Use of undeclared memory address: {:?}", address);
-                                panic!("Invalid memory address at {:?}", instruction);
-                            }
+                        self.alu.operand_fetch(addr_value, src_value);
+                        let (result, overflow) = self.alu.execute();
+
+                        match overflow {
+                            true => self.flags[7].set_value(1),
+                            false => self.flags[7].set_value(0),
                         }
+
+                        println!("Subtraction occured:\nMemory address value: [{0:?}]: {3:?} - Immediate value: {2:?}\nMemory address [{0:?}] updated to: \n{1:?}", label, result, src_value, result);
                     },
                     _ => {
                         panic!("Invalid operands for SUB instruction at {0:?} Be sure that:\n1. Immediate value isn't used as destination.\n2. Movement from memory to memory aren't possible{0:?}", instruction);
@@ -1095,7 +1285,7 @@ impl CPU {
         let syscall_number: u8 = self.registers.get_register(Register::AX).get_value() as u8;
         let file_descriptor: u8 = self.registers.get_register(Register::BX).get_value() as u8;
         let data_length: u16  = self.registers.get_register(Register::DX).get_value() as u16;
-        let data_address: u16 = self.registers.get_register(Register::CX).get_value() as u16;
+        let data_address = self.registers.get_register(Register::CX).get_value() as u32;
 
         // Address is packaged as 32 bit number with the upper 16 bits representing the lenght of data, lower 16 bits hold the actual address of data in memory
         match syscall_number {
@@ -1106,7 +1296,7 @@ impl CPU {
                 stdin().read_exact(read_buffer.as_mut_slice()).unwrap();
 
                 // 
-                let address: u32 = ((data_length << 16) | data_address) as u32;
+                let address: u32 = (((data_length as u32) << 16) | data_address) as u32;
                 self.memory_unit.write_data(address, read_buffer);
                 self.registers.get_register(Register::CX).set_value(Data::Word(address as u16));
                 Ok(())
@@ -1114,7 +1304,7 @@ impl CPU {
             // Write to file descriptor(file or screen)
             // Currently supports only screen output
             2 => {
-                let address = ((data_length << 16) | data_address) as u32;
+                let address = (((data_length as u32) << 16) | data_address) as u32;
                 let mut write_buffer = self.memory_unit.read_data(address);
                 stdout().write_all(write_buffer.as_mut_slice()).unwrap();
                 Ok(())
@@ -1146,11 +1336,11 @@ fn main(){
 
     let code_section: Vec<Instruction> = vec![
         Instruction::new(IS::Mov, vec![Operand::Register(Register::AX), Operand::Immediate(Data::Word(300))]),
-        Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory("num".to_string())]),
+        Instruction::new(IS::Mov, vec![Operand::Register(Register::BX), Operand::Memory(MemOp::Address("num".to_string()))]),
         Instruction::new(IS::Add, vec![Operand::Register(Register::CX), Operand::Register(Register::AX)]),
         Instruction::new(IS::Sub, vec![Operand::Register(Register::CX), Operand::Register(Register::BX)]),
-        Instruction::new(IS::Mov, vec![Operand::Memory("result".to_string()), Operand::Register(Register::CX)]),
-        Instruction::new(IS::Sub, vec![Operand::Memory("num2".to_string()), Operand::Immediate(Data::Word(0x000F))]),
+        Instruction::new(IS::Mov, vec![Operand::Memory(MemOp::Address("result".to_string())), Operand::Register(Register::CX)]),
+        Instruction::new(IS::Sub, vec![Operand::Memory(MemOp::Address("num2".to_string())), Operand::Immediate(Data::Word(0x000F))]),
     ];
     let mut cpu = CPU::new(data_section, code_section);
     cpu.run();
